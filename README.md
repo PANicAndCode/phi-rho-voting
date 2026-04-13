@@ -2,30 +2,29 @@
 
 This is a static GitHub Pages friendly election site for Phi Sigma Rho. It includes:
 
-- President-controlled election flow for speeches, Q&A, discussion, and opening or closing ballots
+- Member accounts that use only a name and password
+- A dedicated president sign-in button tied to `president.psr.rho@gmail.com`
+- President-controlled speeches, Q&A, discussion, and ballot opening or closing
 - Position and candidate setup for the chapter officer slate
-- A ranked ballot flow for Standards Board with four seats
-- President-only result review
-- A Supabase backend option so votes sync across devices and stay hidden from the rest of the chapter
+- Standards Board ranked ballots for four seats
+- President-only results, member online status, role promotion, and kick-out controls
 - A local browser-only demo mode when Supabase is not configured
 
 ## Files
 
-- [index.html](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/index.html)
-- [styles.css](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/styles.css)
-- [js/app.js](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/js/app.js)
-- [js/storage.js](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/js/storage.js)
-- [js/constants.js](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/js/constants.js)
-- [config.js](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/config.js)
-- [supabase/schema.sql](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/supabase/schema.sql)
+- [index.html](/Users/jillianflaspohler/Downloads/Phi Rho Voting/index.html)
+- [styles.css](/Users/jillianflaspohler/Downloads/Phi Rho Voting/styles.css)
+- [js/app.js](/Users/jillianflaspohler/Downloads/Phi Rho Voting/js/app.js)
+- [js/storage.js](/Users/jillianflaspohler/Downloads/Phi Rho Voting/js/storage.js)
+- [js/constants.js](/Users/jillianflaspohler/Downloads/Phi Rho Voting/js/constants.js)
+- [config.js](/Users/jillianflaspohler/Downloads/Phi Rho Voting/config.js)
+- [supabase/schema.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/schema.sql)
 
 ## Supabase setup
 
 1. Create a new Supabase project.
-2. Open the SQL editor and run the contents of [supabase/schema.sql](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/supabase/schema.sql).
-3. In Supabase Auth, enable email and password sign-in.
-4. Decide whether members should confirm their emails. If you want a smoother launch, disable email confirmation during setup.
-5. Open [config.js](/Users/jillianflaspohler/Downloads/Roblox- Burger/Phi Rho Voting/config.js) and paste in:
+2. Open the SQL editor and run [supabase/schema.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/schema.sql).
+3. Open [config.js](/Users/jillianflaspohler/Downloads/Phi Rho Voting/config.js) and paste in:
 
 ```js
 window.PHI_RHO_CONFIG = {
@@ -34,25 +33,55 @@ window.PHI_RHO_CONFIG = {
 };
 ```
 
-6. Open the site, create the president account, then promote that account in the Supabase SQL editor:
+4. Create the fixed president account in Supabase once, choosing the password you want the president button to use:
 
 ```sql
-update public.profiles
-set role = 'president'
-where email = 'president-email@example.com';
+insert into public.members (
+  login_name,
+  login_name_normalized,
+  display_name,
+  password_hash,
+  role,
+  member_status,
+  contact_email
+)
+values (
+  'President',
+  public.normalize_member_name('President'),
+  'President',
+  crypt('choose-a-strong-password', gen_salt('bf')),
+  'president',
+  'active',
+  public.president_login_email()
+)
+on conflict (contact_email) do update
+set password_hash = excluded.password_hash,
+    role = 'president',
+    updated_at = now();
 ```
 
-7. Sign back in with that account. The President Console will unlock and that account will be able to control the floor and review results.
+5. Open the site. Members can create accounts immediately with their name and password.
+6. The president signs in with the dedicated president button and the password you set in step 4.
+
+## How access works
+
+- Members create an account with just a name and password.
+- There is no email verification and no confirmation step.
+- The president button always targets the member record whose `contact_email` is `president.psr.rho@gmail.com`.
+- Any member granted the `president` role can also reach the president console after signing in with their own name and password.
+- The president console can:
+  - see which members are currently online
+  - promote members into president access
+  - remove president access from other members
+  - kick out active member sessions
+  - run the election flow and view results
 
 ## GitHub Pages deployment
 
-1. Create a GitHub repository and upload this folder.
-2. Commit `config.js` only if you are comfortable exposing your Supabase URL and anon key in the repository.
-3. In GitHub, open `Settings > Pages`.
-4. Set the deploy source to your main branch and the root folder.
-5. GitHub Pages will host the frontend, while Supabase handles auth, storage, and row-level security.
-
-If you do not want to commit your real keys, keep a private branch with the real `config.js`, or host a private copy for chapter use.
+1. Push this folder to GitHub.
+2. In GitHub, open `Settings > Pages`.
+3. Set the deploy source to the `main` branch and the root folder.
+4. GitHub Pages will host the frontend, while Supabase stores members, sessions, votes, and election state.
 
 ## Election rules currently reflected in the app
 
@@ -65,17 +94,19 @@ If you do not want to commit your real keys, keep a private branch with the real
 
 ## Important assumptions
 
+- Member names are treated as unique login names. If two sisters share the same name, use a distinct version such as a middle initial.
 - The app treats these offices as exec for the unopposed 3/4 rule: President, VP-I, VP-F, VP-ME, VP-R, Social Chair, and Secretary.
-- Standards Board counting is implemented as a weighted ranked tally because the bylaws snippet describes ranking but does not specify the exact counting method.
-- Consecutive-term limits are shown as reminders in the interface, but the app does not enforce prior-term eligibility automatically because it does not track officer history.
+- Standards Board counting is implemented as a weighted ranked tally because the bylaws snippet describes ranking but does not specify the exact counting formula.
+- Consecutive-term limits are shown as reminders in the interface, but the app does not enforce officer-history eligibility automatically.
 
 ## Security notes
 
 - GitHub Pages alone cannot securely store chapter ballots or hide results. That is why the real multi-device mode depends on Supabase.
-- The public board can read election state so chapter members can see the live office, timer, and current phase without opening results.
-- Non-president signed-in users can read only their own ballot rows.
-- President accounts can read all ballots for tallying.
-- Supabase project owners can still inspect database rows from the dashboard. If you need stronger secrecy than president-only app access, you would need a more advanced ballot design.
+- This version uses custom chapter accounts and signed session tokens instead of Supabase Auth email login.
+- Direct table access is blocked by row-level security. The site talks to Supabase through SQL RPC functions.
+- Non-president signed-in users can access only their own vote through the app.
+- President accounts can review tallies and manage member sessions.
+- Supabase project owners can still inspect database rows from the dashboard.
 
 ## Local preview
 

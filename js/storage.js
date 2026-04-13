@@ -1,14 +1,13 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/+esm";
-import {
-  createInitialState,
-  MEMBER_STATUSES,
-  normalizeState,
-  ROLE_TYPES,
-} from "./constants.js";
+import { createInitialState, MEMBER_STATUSES, normalizeState, ROLE_TYPES } from "./constants.js";
 
-const LOCAL_STATE_KEY = "phi-rho-election-state-v1";
-const LOCAL_PROFILE_KEY = "phi-rho-election-profile-v1";
-const LOCAL_VOTES_KEY = "phi-rho-election-votes-v1";
+const LOCAL_STATE_KEY = "phi-rho-election-state-v2";
+const LOCAL_MEMBERS_KEY = "phi-rho-election-members-v2";
+const LOCAL_VOTES_KEY = "phi-rho-election-votes-v2";
+const LOCAL_SESSIONS_KEY = "phi-rho-election-sessions-v2";
+const LOCAL_SESSION_TOKEN_KEY = "phi-rho-election-session-token-v2";
+const PRESIDENT_EMAIL = "president.psr.rho@gmail.com";
+const ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
 function readJson(key, fallbackValue) {
   try {
@@ -31,20 +30,104 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeName(name = "") {
+  return String(name).trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function randomId(prefix) {
+  return globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.random()}`;
+}
+
+function activeWithinWindow(isoString) {
+  if (!isoString) {
+    return false;
+  }
+
+  return Date.now() - new Date(isoString).getTime() <= ONLINE_WINDOW_MS;
+}
+
+function publicMember(member, sessions = []) {
+  const isOnline = sessions.some(
+    (session) =>
+      session.member_id === member.id &&
+      !session.revoked_at &&
+      activeWithinWindow(session.last_seen_at),
+  );
+
+  return {
+    id: member.id,
+    login_name: member.login_name,
+    display_name: member.display_name,
+    role: member.role,
+    member_status: member.member_status,
+    contact_email: member.contact_email || null,
+    is_online: isOnline,
+  };
+}
+
+function sortMembers(members) {
+  return [...members].sort((left, right) => {
+    if (left.is_online !== right.is_online) {
+      return left.is_online ? -1 : 1;
+    }
+
+    if (left.role !== right.role) {
+      return left.role === ROLE_TYPES.president ? -1 : 1;
+    }
+
+    return left.display_name.localeCompare(right.display_name);
+  });
+}
+
+function validateCredentials(name, password) {
+  if (!name.trim()) {
+    throw new Error("Enter your name.");
+  }
+
+  if (password.trim().length < 6) {
+    throw new Error("Use a password with at least 6 characters.");
+  }
+}
+
 export class LocalElectionService {
   constructor() {
     this.mode = "local";
-    this.label = "Demo mode";
+    this.label = "Local demo mode";
     this.requiresAuth = false;
     this.state = normalizeState(readJson(LOCAL_STATE_KEY, createInitialState()));
-    this.profile = readJson(LOCAL_PROFILE_KEY, null);
+    this.members = readJson(LOCAL_MEMBERS_KEY, []);
     this.votes = readJson(LOCAL_VOTES_KEY, {});
+    this.sessions = readJson(LOCAL_SESSIONS_KEY, []);
+    this.sessionToken = window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || null;
+    this.profile = null;
+  }
+
+  persistCollections() {
+    writeJson(LOCAL_STATE_KEY, this.state);
+    writeJson(LOCAL_MEMBERS_KEY, this.members);
+    writeJson(LOCAL_VOTES_KEY, this.votes);
+    writeJson(LOCAL_SESSIONS_KEY, this.sessions);
+  }
+
+  clearSessionToken() {
+    this.sessionToken = null;
+    this.profile = null;
+    window.localStorage.removeItem(LOCAL_SESSION_TOKEN_KEY);
   }
 
   async init() {
     this.state = normalizeState(readJson(LOCAL_STATE_KEY, this.state));
-    this.profile = readJson(LOCAL_PROFILE_KEY, this.profile);
+    this.members = readJson(LOCAL_MEMBERS_KEY, this.members);
     this.votes = readJson(LOCAL_VOTES_KEY, this.votes);
+    this.sessions = readJson(LOCAL_SESSIONS_KEY, this.sessions);
+    this.sessionToken = window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || null;
+
+    if (this.sessionToken) {
+      await this.touchSession();
+    } else {
+      this.profile = null;
+    }
+
     return this.snapshot();
   }
 
@@ -52,53 +135,206 @@ export class LocalElectionService {
     return {
       state: deepClone(this.state),
       profile: this.profile ? { ...this.profile } : null,
-      session: this.profile ? { user: { id: this.profile.id } } : null,
+      session: this.sessionToken ? { token: this.sessionToken } : null,
     };
   }
 
-  async signInLocal({ displayName, role, memberStatus }) {
-    this.profile = {
-      id: globalThis.crypto?.randomUUID?.() ?? `local-${Date.now()}`,
-      email: "demo@local",
-      display_name: displayName.trim(),
-      role,
-      member_status: memberStatus,
+  findMemberByNormalizedName(name) {
+    const normalized = normalizeName(name);
+    return this.members.find((member) => member.login_name_normalized === normalized) || null;
+  }
+
+  getCurrentMemberRecord() {
+    if (!this.profile?.id) {
+      return null;
+    }
+
+    return this.members.find((member) => member.id === this.profile.id) || null;
+  }
+
+  assertPresident() {
+    const member = this.getCurrentMemberRecord();
+    if (!member || member.role !== ROLE_TYPES.president) {
+      throw new Error("Only the president can use that control.");
+    }
+    return member;
+  }
+
+  createSessionForMember(member) {
+    const token = randomId("session");
+    const session = {
+      id: randomId("session-row"),
+      member_id: member.id,
+      token,
+      created_at: nowIso(),
+      last_seen_at: nowIso(),
+      revoked_at: null,
+      revoked_reason: null,
     };
-    writeJson(LOCAL_PROFILE_KEY, this.profile);
+
+    this.sessions.push(session);
+    this.sessionToken = token;
+    window.localStorage.setItem(LOCAL_SESSION_TOKEN_KEY, token);
+    this.profile = publicMember(member, this.sessions);
+    this.persistCollections();
     return this.snapshot();
   }
 
+  async signUp({ name, password, memberStatus }) {
+    validateCredentials(name, password);
+
+    if (this.findMemberByNormalizedName(name)) {
+      throw new Error("That name is already in use. Try a slightly different version.");
+    }
+
+    const member = {
+      id: randomId("member"),
+      login_name: name.trim(),
+      login_name_normalized: normalizeName(name),
+      display_name: name.trim(),
+      password,
+      role: ROLE_TYPES.member,
+      member_status: memberStatus || MEMBER_STATUSES.active,
+      contact_email: null,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+
+    this.members.push(member);
+    return this.createSessionForMember(member);
+  }
+
+  async signIn(name, password) {
+    validateCredentials(name, password);
+    const member = this.findMemberByNormalizedName(name);
+
+    if (!member || member.password !== password) {
+      throw new Error("That name and password did not match.");
+    }
+
+    return this.createSessionForMember(member);
+  }
+
+  async signInPresident(password) {
+    validateCredentials("President", password);
+    let member =
+      this.members.find((entry) => entry.contact_email === PRESIDENT_EMAIL) || null;
+
+    if (!member) {
+      member = {
+        id: randomId("member"),
+        login_name: "President",
+        login_name_normalized: normalizeName("President"),
+        display_name: "President",
+        password,
+        role: ROLE_TYPES.president,
+        member_status: MEMBER_STATUSES.active,
+        contact_email: PRESIDENT_EMAIL,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      this.members.push(member);
+    } else if (member.password !== password) {
+      throw new Error("The president password is incorrect.");
+    }
+
+    return this.createSessionForMember(member);
+  }
+
+  async touchSession() {
+    if (!this.sessionToken) {
+      this.profile = null;
+      return null;
+    }
+
+    const session = this.sessions.find(
+      (entry) => entry.token === this.sessionToken && !entry.revoked_at,
+    );
+
+    if (!session) {
+      this.clearSessionToken();
+      return null;
+    }
+
+    session.last_seen_at = nowIso();
+    const member = this.members.find((entry) => entry.id === session.member_id) || null;
+
+    if (!member) {
+      this.clearSessionToken();
+      this.persistCollections();
+      return null;
+    }
+
+    this.profile = publicMember(member, this.sessions);
+    this.persistCollections();
+    return {
+      session_token: this.sessionToken,
+      member: { ...this.profile },
+    };
+  }
+
   async signOut() {
-    this.profile = null;
-    window.localStorage.removeItem(LOCAL_PROFILE_KEY);
+    if (this.sessionToken) {
+      const session = this.sessions.find((entry) => entry.token === this.sessionToken);
+      if (session) {
+        session.revoked_at = nowIso();
+        session.revoked_reason = "signed out";
+      }
+    }
+
+    this.persistCollections();
+    this.clearSessionToken();
     return this.snapshot();
   }
 
   async resetDemoData() {
     this.state = createInitialState();
+    this.members = [];
     this.votes = {};
-    this.profile = null;
+    this.sessions = [];
+    this.clearSessionToken();
     window.localStorage.removeItem(LOCAL_STATE_KEY);
-    window.localStorage.removeItem(LOCAL_PROFILE_KEY);
+    window.localStorage.removeItem(LOCAL_MEMBERS_KEY);
     window.localStorage.removeItem(LOCAL_VOTES_KEY);
+    window.localStorage.removeItem(LOCAL_SESSIONS_KEY);
     return this.snapshot();
   }
 
-  async saveProfile({ displayName, memberStatus, role }) {
-    if (!this.profile) {
-      throw new Error("Enter demo mode before saving a profile.");
-    }
-    if (!displayName.trim()) {
-      throw new Error("Enter a display name before saving your profile.");
+  async saveProfile({ displayName, memberStatus, newPassword }) {
+    const member = this.getCurrentMemberRecord();
+    if (!member) {
+      throw new Error("Sign in before saving your profile.");
     }
 
-    this.profile = {
-      ...this.profile,
-      display_name: displayName.trim(),
-      member_status: memberStatus || MEMBER_STATUSES.active,
-      role: role || this.profile.role || ROLE_TYPES.member,
-    };
-    writeJson(LOCAL_PROFILE_KEY, this.profile);
+    if (!displayName.trim()) {
+      throw new Error("Enter your name before saving.");
+    }
+
+    const nextNormalized = normalizeName(displayName);
+    const duplicate = this.members.find(
+      (entry) =>
+        entry.id !== member.id && entry.login_name_normalized === nextNormalized,
+    );
+
+    if (duplicate) {
+      throw new Error("That name is already taken by another member.");
+    }
+
+    member.display_name = displayName.trim();
+    member.login_name = displayName.trim();
+    member.login_name_normalized = nextNormalized;
+    member.member_status = memberStatus || MEMBER_STATUSES.active;
+    member.updated_at = nowIso();
+
+    if (newPassword?.trim()) {
+      if (newPassword.trim().length < 6) {
+        throw new Error("Use a password with at least 6 characters.");
+      }
+      member.password = newPassword.trim();
+    }
+
+    this.profile = publicMember(member, this.sessions);
+    this.persistCollections();
     return { ...this.profile };
   }
 
@@ -108,6 +344,7 @@ export class LocalElectionService {
   }
 
   async saveState(nextState) {
+    this.assertPresident();
     this.state = normalizeState({
       ...nextState,
       timestamps: {
@@ -132,24 +369,72 @@ export class LocalElectionService {
   }
 
   async getVotesForOffice(officeId) {
+    this.assertPresident();
     return Object.values(this.votes).filter((vote) => vote.office_id === officeId);
   }
 
   async submitVote(officeId, ballotPayload) {
     if (!this.profile) {
-      throw new Error("Enter demo mode before voting.");
+      throw new Error("Sign in before voting.");
     }
 
     const key = `${officeId}::${this.profile.id}`;
     this.votes[key] = {
       office_id: officeId,
       voter_id: this.profile.id,
-      voter_name: this.profile.display_name,
       updated_at: nowIso(),
       ballot_payload: ballotPayload,
     };
     writeJson(LOCAL_VOTES_KEY, this.votes);
     return { ...this.votes[key] };
+  }
+
+  async listMembers() {
+    this.assertPresident();
+    return sortMembers(this.members.map((member) => publicMember(member, this.sessions)));
+  }
+
+  async setMemberRole(memberId, role) {
+    this.assertPresident();
+    const member = this.members.find((entry) => entry.id === memberId);
+
+    if (!member) {
+      throw new Error("Member not found.");
+    }
+
+    if (member.contact_email === PRESIDENT_EMAIL && role !== ROLE_TYPES.president) {
+      throw new Error("The main president account cannot lose president access.");
+    }
+
+    member.role = role;
+    member.updated_at = nowIso();
+
+    if (this.profile?.id === member.id) {
+      this.profile = publicMember(member, this.sessions);
+    }
+
+    this.persistCollections();
+    return publicMember(member, this.sessions);
+  }
+
+  async kickMember(memberId) {
+    this.assertPresident();
+    this.sessions = this.sessions.map((session) =>
+      session.member_id === memberId && !session.revoked_at
+        ? {
+            ...session,
+            revoked_at: nowIso(),
+            revoked_reason: "kicked by president",
+          }
+        : session,
+    );
+
+    if (this.profile?.id === memberId) {
+      this.clearSessionToken();
+    }
+
+    writeJson(LOCAL_SESSIONS_KEY, this.sessions);
+    return true;
   }
 }
 
@@ -157,165 +442,130 @@ export class SupabaseElectionService {
   constructor(config) {
     this.mode = "supabase";
     this.label = "Supabase sync";
-    this.requiresAuth = true;
-    this.client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    });
-    this.profile = null;
-    this.session = null;
+    this.requiresAuth = false;
+    this.client = createClient(config.supabaseUrl, config.supabaseAnonKey);
     this.state = createInitialState();
-  }
-
-  async init() {
-    await this.refreshSession();
-    await this.loadProfile();
-    await this.loadState();
-    return this.snapshot();
+    this.profile = null;
+    this.sessionToken = window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || null;
   }
 
   snapshot() {
     return {
       state: deepClone(this.state),
       profile: this.profile ? { ...this.profile } : null,
-      session: this.session,
+      session: this.sessionToken ? { token: this.sessionToken } : null,
     };
   }
 
-  async refreshSession() {
-    const {
-      data: { session },
-      error,
-    } = await this.client.auth.getSession();
+  async callRpc(functionName, params = {}) {
+    const { data, error } = await this.client.rpc(functionName, params);
 
     if (error) {
-      throw error;
+      throw new Error(error.message || "Supabase request failed.");
     }
 
-    this.session = session;
-    return session;
+    return data;
   }
 
-  async signIn(email, password) {
-    const { error } = await this.client.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    await this.refreshSession();
-    await this.loadProfile();
-    return this.snapshot();
-  }
-
-  async signUp({ email, password, displayName, memberStatus }) {
-    const { data, error } = await this.client.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    this.session = data.session;
-
-    if (data.session) {
-      await this.saveProfile({
-        displayName,
-        memberStatus,
-      });
-    }
-
-    return {
-      ...this.snapshot(),
-      needsConfirmation: !data.session,
-    };
-  }
-
-  async signOut() {
-    const { error } = await this.client.auth.signOut();
-
-    if (error) {
-      throw error;
-    }
-
-    this.session = null;
+  clearSession() {
+    this.sessionToken = null;
     this.profile = null;
+    window.localStorage.removeItem(LOCAL_SESSION_TOKEN_KEY);
+  }
+
+  setAuthPayload(payload) {
+    if (!payload?.session_token || !payload?.member) {
+      throw new Error("The server did not return a valid session.");
+    }
+
+    this.sessionToken = payload.session_token;
+    this.profile = payload.member;
+    window.localStorage.setItem(LOCAL_SESSION_TOKEN_KEY, this.sessionToken);
     return this.snapshot();
-  }
-
-  async loadProfile() {
-    if (!this.session?.user?.id) {
-      this.profile = null;
-      return null;
-    }
-
-    const { data, error } = await this.client
-      .from("profiles")
-      .select("*")
-      .eq("id", this.session.user.id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    this.profile = data || null;
-    return this.profile;
-  }
-
-  async saveProfile({ displayName, memberStatus }) {
-    if (!this.session?.user?.id) {
-      throw new Error("Sign in before saving a profile.");
-    }
-    if (!displayName.trim()) {
-      throw new Error("Enter a display name before saving your profile.");
-    }
-
-    const payload = {
-      id: this.session.user.id,
-      email: this.session.user.email,
-      display_name: displayName.trim(),
-      member_status: memberStatus || MEMBER_STATUSES.active,
-      role: this.profile?.role || ROLE_TYPES.member,
-      updated_at: nowIso(),
-    };
-
-    const { data, error } = await this.client
-      .from("profiles")
-      .upsert(payload, {
-        onConflict: "id",
-      })
-      .select("*")
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    this.profile = data;
-    return { ...this.profile };
   }
 
   async loadState() {
-    const { data, error } = await this.client
-      .from("app_state")
-      .select("state")
-      .eq("id", true)
-      .maybeSingle();
+    const data = await this.callRpc("get_public_state");
+    this.state = normalizeState(data || createInitialState());
+    return deepClone(this.state);
+  }
 
-    if (error) {
-      throw error;
+  async init() {
+    await this.loadState();
+
+    if (this.sessionToken) {
+      try {
+        const data = await this.callRpc("touch_session", {
+          p_session_token: this.sessionToken,
+        });
+
+        if (data?.member) {
+          this.profile = data.member;
+        } else {
+          this.clearSession();
+        }
+      } catch (error) {
+        this.clearSession();
+      }
+    } else {
+      this.profile = null;
     }
 
-    this.state = normalizeState(data?.state || createInitialState());
-    return deepClone(this.state);
+    return this.snapshot();
+  }
+
+  async signUp({ name, password, memberStatus }) {
+    const data = await this.callRpc("register_member", {
+      p_name: name,
+      p_password: password,
+      p_member_status: memberStatus || MEMBER_STATUSES.active,
+    });
+
+    return this.setAuthPayload(data);
+  }
+
+  async signIn(name, password) {
+    const data = await this.callRpc("sign_in_member", {
+      p_name: name,
+      p_password: password,
+    });
+
+    return this.setAuthPayload(data);
+  }
+
+  async signInPresident(password) {
+    const data = await this.callRpc("sign_in_president", {
+      p_password: password,
+    });
+
+    return this.setAuthPayload(data);
+  }
+
+  async signOut() {
+    if (this.sessionToken) {
+      await this.callRpc("sign_out_member", {
+        p_session_token: this.sessionToken,
+      });
+    }
+
+    this.clearSession();
+    return this.snapshot();
+  }
+
+  async saveProfile({ displayName, memberStatus, newPassword }) {
+    if (!this.sessionToken) {
+      throw new Error("Sign in before saving your profile.");
+    }
+
+    const data = await this.callRpc("update_member_profile", {
+      p_session_token: this.sessionToken,
+      p_display_name: displayName,
+      p_member_status: memberStatus || MEMBER_STATUSES.active,
+      p_new_password: newPassword?.trim() || null,
+    });
+
+    this.profile = data;
+    return { ...this.profile };
   }
 
   async getState() {
@@ -323,97 +573,89 @@ export class SupabaseElectionService {
   }
 
   async saveState(nextState) {
-    if (!this.session?.user?.id) {
+    if (!this.sessionToken) {
       throw new Error("Sign in as the president before changing election state.");
     }
 
-    const payload = {
-      id: true,
-      state: normalizeState({
-        ...nextState,
-        timestamps: {
-          ...(nextState.timestamps || {}),
-          updatedAt: nowIso(),
-        },
-      }),
-      updated_at: nowIso(),
-      updated_by: this.session.user.id,
-    };
+    const data = await this.callRpc("save_app_state", {
+      p_session_token: this.sessionToken,
+      p_state: normalizeState(nextState),
+    });
 
-    const { data, error } = await this.client
-      .from("app_state")
-      .upsert(payload, {
-        onConflict: "id",
-      })
-      .select("state")
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    this.state = normalizeState(data.state);
+    this.state = normalizeState(data);
     return deepClone(this.state);
   }
 
   async getUserVote(officeId) {
-    if (!this.session?.user?.id) {
+    if (!this.sessionToken) {
       return null;
     }
 
-    const { data, error } = await this.client
-      .from("votes")
-      .select("*")
-      .eq("office_id", officeId)
-      .eq("voter_id", this.session.user.id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    return data || null;
+    return await this.callRpc("get_member_vote", {
+      p_session_token: this.sessionToken,
+      p_office_id: officeId,
+    });
   }
 
   async getVotesForOffice(officeId) {
-    const { data, error } = await this.client
-      .from("votes")
-      .select("*")
-      .eq("office_id", officeId)
-      .order("updated_at", { ascending: false });
-
-    if (error) {
-      throw error;
+    if (!this.sessionToken) {
+      return [];
     }
 
-    return data || [];
+    return (
+      (await this.callRpc("get_office_votes", {
+        p_session_token: this.sessionToken,
+        p_office_id: officeId,
+      })) || []
+    );
   }
 
   async submitVote(officeId, ballotPayload) {
-    if (!this.session?.user?.id) {
+    if (!this.sessionToken) {
       throw new Error("Sign in before voting.");
     }
 
-    const payload = {
-      office_id: officeId,
-      voter_id: this.session.user.id,
-      ballot_payload: ballotPayload,
-      updated_at: nowIso(),
-    };
+    return await this.callRpc("submit_vote", {
+      p_session_token: this.sessionToken,
+      p_office_id: officeId,
+      p_ballot_payload: ballotPayload,
+    });
+  }
 
-    const { data, error } = await this.client
-      .from("votes")
-      .upsert(payload, {
-        onConflict: "office_id,voter_id",
-      })
-      .select("*")
-      .single();
-
-    if (error) {
-      throw error;
+  async listMembers() {
+    if (!this.sessionToken) {
+      return [];
     }
 
-    return data;
+    return (
+      (await this.callRpc("list_members", {
+        p_session_token: this.sessionToken,
+      })) || []
+    );
+  }
+
+  async setMemberRole(memberId, role) {
+    if (!this.sessionToken) {
+      throw new Error("Sign in as the president first.");
+    }
+
+    return await this.callRpc("set_member_role", {
+      p_session_token: this.sessionToken,
+      p_member_id: memberId,
+      p_role: role,
+    });
+  }
+
+  async kickMember(memberId) {
+    if (!this.sessionToken) {
+      throw new Error("Sign in as the president first.");
+    }
+
+    await this.callRpc("kick_member", {
+      p_session_token: this.sessionToken,
+      p_member_id: memberId,
+    });
+    return true;
   }
 }
 

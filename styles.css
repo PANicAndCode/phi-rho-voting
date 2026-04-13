@@ -145,13 +145,13 @@ body::after {
   color: var(--slate-700);
 }
 
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.hero-note {
+  max-width: 50ch;
+  margin: 0;
+  color: var(--slate-500);
+  line-height: 1.7;
 }
 
-.tag,
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -161,12 +161,6 @@ body::after {
   font-size: 0.86rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-}
-
-.tag {
-  border: 1px solid rgba(94, 31, 44, 0.12);
-  background: rgba(141, 54, 73, 0.08);
-  color: var(--wine-800);
 }
 
 .hero-side {
@@ -376,6 +370,10 @@ body::after {
   margin-top: 18px;
 }
 
+.president-login-grid {
+  margin-top: 22px;
+}
+
 .auth-help,
 .profile-summary,
 .panel-card,
@@ -394,6 +392,10 @@ body::after {
 .results-card,
 .receipt-card {
   padding: 22px;
+}
+
+.auth-pane {
+  height: 100%;
 }
 
 .auth-help h3,
@@ -546,7 +548,8 @@ textarea:focus {
 
 .candidate-list,
 .office-queue,
-.candidate-editor {
+.candidate-editor,
+.member-directory {
   display: grid;
   gap: 12px;
   margin-top: 18px;
@@ -555,7 +558,8 @@ textarea:focus {
 .candidate-card,
 .queue-card,
 .candidate-editor-row,
-.result-row {
+.result-row,
+.member-row {
   display: flex;
   justify-content: space-between;
   gap: 18px;
@@ -578,10 +582,22 @@ textarea:focus {
 .candidate-card p,
 .queue-card p,
 .candidate-editor-row p,
-.result-row p {
+.result-row p,
+.member-row p {
   margin: 6px 0 0;
   color: var(--slate-700);
   line-height: 1.55;
+}
+
+.member-main {
+  min-width: 0;
+}
+
+.member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .choice-stack {
@@ -724,9 +740,14 @@ textarea:focus {
   .candidate-card,
   .queue-card,
   .candidate-editor-row,
-  .result-row {
+  .result-row,
+  .member-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .member-actions {
+    justify-content: flex-start;
   }
 
   .button-grid,

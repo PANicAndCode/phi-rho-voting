@@ -10,6 +10,8 @@ import {
 } from "./constants.js";
 import { buildElectionService } from "./storage.js";
 
+const PRESIDENT_EMAIL = "president.psr.rho@gmail.com";
+
 const app = {
   config: window.PHI_RHO_CONFIG || {},
   service: null,
@@ -21,6 +23,7 @@ const app = {
   editOfficeId: "",
   currentVote: null,
   reviewVotes: [],
+  memberDirectory: [],
   syncHandle: null,
   tickerHandle: null,
   messages: {
@@ -53,6 +56,10 @@ function setMessage(key, text, tone = "info") {
   app.messages[key] = text ? { text, tone } : null;
 }
 
+function clearMessage(key) {
+  app.messages[key] = null;
+}
+
 function renderNotice(element, message) {
   if (!element) {
     return;
@@ -70,16 +77,16 @@ function renderNotice(element, message) {
   element.textContent = message.text;
 }
 
+function isSignedIn() {
+  return Boolean(app.profile);
+}
+
 function getRole() {
   return app.profile?.role || ROLE_TYPES.member;
 }
 
 function isPresident() {
   return getRole() === ROLE_TYPES.president;
-}
-
-function isSignedIn() {
-  return Boolean(app.profile || app.session);
 }
 
 function getOffices() {
@@ -116,9 +123,11 @@ function isUnopposedExec(office) {
 
 function normalizeSelectedOfficeIds() {
   const activeOffice = getActiveOffice();
+
   if (!getOfficeById(app.reviewOfficeId)) {
     app.reviewOfficeId = activeOffice?.id || "";
   }
+
   if (!getOfficeById(app.editOfficeId)) {
     app.editOfficeId = activeOffice?.id || "";
   }
@@ -164,17 +173,21 @@ function getPhaseMeta() {
   const remainingMs = remainingPhaseMs();
 
   let metaText = phase.description;
+
   if (phaseKey === "speech" || phaseKey === "qa") {
     metaText = candidate
       ? `${candidate.name} is currently on the floor.`
       : "Choose a candidate before starting this phase.";
   }
+
   if (phaseKey === "voting") {
     metaText = "Ballots can be submitted or updated until the president closes voting.";
   }
+
   if (phaseKey === "closed") {
     metaText = "The president can review results and queue the next office.";
   }
+
   if (
     app.state.session.phaseEndsAt &&
     remainingMs <= 0 &&
@@ -210,18 +223,7 @@ function getBallotAvailability(office) {
     return {
       open: false,
       label: "Sign in required",
-      message:
-        app.service.mode === "supabase"
-          ? "Sign in to your chapter account before voting."
-          : "Enter demo mode before submitting a ballot.",
-    };
-  }
-
-  if (app.service.mode === "supabase" && !app.profile) {
-    return {
-      open: false,
-      label: "Profile required",
-      message: "Complete your chapter profile before casting a ballot.",
+      message: "Sign in with your chapter name and password before voting.",
     };
   }
 
@@ -254,6 +256,7 @@ function summarizeVote(office, vote) {
   }
 
   const payload = vote.ballot_payload;
+
   if (office.ballotType === BALLOT_TYPES.ranked) {
     const ranking = Array.isArray(payload.ranking) ? payload.ranking : [];
     const labels = ranking
@@ -362,8 +365,10 @@ function computeRankedResults(office, votes) {
       if (!pointsById.has(candidateId)) {
         return;
       }
+
       const awarded = Math.max((office.seats || 4) - index, 1);
       pointsById.set(candidateId, pointsById.get(candidateId) + awarded);
+
       if (index === 0) {
         firstChoiceById.set(candidateId, firstChoiceById.get(candidateId) + 1);
       }
@@ -382,6 +387,7 @@ function computeRankedResults(office, votes) {
       if (right.score !== left.score) {
         return right.score - left.score;
       }
+
       return right.firstChoices - left.firstChoices;
     });
 
@@ -428,30 +434,38 @@ function computeResults(office, votes) {
 
 function renderAuth() {
   const isRemote = app.service.mode === "supabase";
-  dom.backendBadge.textContent = isRemote ? "Supabase connected" : "Local demo only";
-  dom.authBadge.textContent = isSignedIn()
-    ? isRemote
-      ? `Signed in as ${app.profile?.display_name || app.session?.user?.email || "member"}`
-      : `Demo mode: ${app.profile?.display_name || "member"}`
-    : "Not signed in";
+  dom.backendBadge.textContent = isRemote ? "Supabase live sync" : "Local demo only";
+  dom.backendHelpText.textContent = isRemote
+    ? "The live version uses Supabase, but members still sign in only with a name and password. No email verification is required."
+    : "This preview is running only in your browser. It is useful for design and flow testing, but it will not sync across devices.";
 
-  dom.remoteAuthBlock.classList.toggle("hidden", !isRemote || isSignedIn());
-  dom.localAuthBlock.classList.toggle("hidden", isRemote);
-  dom.profileBlock.classList.toggle("hidden", !isRemote || !isSignedIn());
+  if (isSignedIn()) {
+    dom.authBadge.textContent = `${app.profile.display_name} - ${app.profile.role}`;
+  } else {
+    dom.authBadge.textContent = "Not signed in";
+  }
 
-  if (!isRemote) {
-    dom.localDisplayName.value = app.profile?.display_name || "";
-    dom.localRole.value = app.profile?.role || ROLE_TYPES.member;
-    dom.localMemberStatus.value = app.profile?.member_status || MEMBER_STATUSES.active;
-  } else if (isSignedIn()) {
-    dom.profileHeading.textContent = app.profile?.display_name
-      ? `Signed in as ${app.profile.display_name}`
-      : "Complete your chapter profile";
-    dom.profileSummaryText.textContent = app.profile
-      ? `${app.profile.email || app.session?.user?.email || ""} - ${app.profile.member_status} - role: ${app.profile.role}`
-      : `${app.session?.user?.email || ""} - create a profile row to finish setup`;
-    dom.profileDisplayName.value = app.profile?.display_name || "";
-    dom.profileMemberStatus.value = app.profile?.member_status || MEMBER_STATUSES.active;
+  dom.credentialBlock.classList.toggle("hidden", isSignedIn());
+  dom.presidentAccessBlock.classList.toggle("hidden", isSignedIn());
+  dom.profileBlock.classList.toggle("hidden", !isSignedIn());
+  dom.localToolsBlock.classList.toggle("hidden", isRemote);
+
+  if (isSignedIn()) {
+    dom.profileHeading.textContent = `Signed in as ${app.profile.display_name}`;
+    dom.profileSummaryText.textContent = [
+      `Status: ${app.profile.member_status}`,
+      `Role: ${app.profile.role}`,
+      app.profile.contact_email ? `President email: ${app.profile.contact_email}` : "",
+    ]
+      .filter(Boolean)
+      .join(" - ");
+    dom.profileDisplayName.value = app.profile.display_name || "";
+    dom.profileMemberStatus.value = app.profile.member_status || MEMBER_STATUSES.active;
+    dom.profilePassword.value = "";
+  } else {
+    dom.memberNameInput.value = "";
+    dom.memberPasswordInput.value = "";
+    dom.presidentPasswordInput.value = "";
   }
 
   renderNotice(dom.authMessage, app.messages.auth);
@@ -489,6 +503,7 @@ function renderOfficeDetail(office) {
 
 function renderCandidateList(office) {
   const candidates = getCandidates(office);
+
   if (!office || !candidates.length) {
     dom.candidateList.innerHTML = `
       <div class="empty-state">
@@ -502,6 +517,7 @@ function renderCandidateList(office) {
   dom.candidateList.innerHTML = candidates
     .map((candidate) => {
       const isActiveSpeaker = app.state.session.activeCandidateId === candidate.id;
+
       return `
         <article class="candidate-card ${isActiveSpeaker ? "active-speaker" : ""}">
           <div>
@@ -518,6 +534,7 @@ function renderCandidateList(office) {
 function renderBallotForm(office) {
   const availability = getBallotAvailability(office);
   dom.ballotStatusPill.textContent = availability.label;
+
   renderNotice(
     dom.ballotNotice,
     app.messages.ballot || {
@@ -539,6 +556,7 @@ function renderBallotForm(office) {
   if (office.ballotType === BALLOT_TYPES.ranked) {
     const rankingSlots = Math.min(office.seats || 4, candidates.length);
     const currentRanking = Array.isArray(existingPayload.ranking) ? existingPayload.ranking : [];
+
     ballotFields = Array.from({ length: rankingSlots })
       .map((_, index) => {
         const selected = currentRanking[index] || "";
@@ -635,11 +653,17 @@ function renderBallotForm(office) {
 
 function renderOfficeQueue() {
   const activeOfficeId = app.state.session.activeOfficeId;
+
   dom.officeQueue.innerHTML = getOffices()
     .map((office) => {
       const isActive = office.id === activeOfficeId;
       const candidateCount = getCandidates(office).length;
-      const chip = isActive ? "Active" : office.ballotType === BALLOT_TYPES.ranked ? "Ranked" : "Ready";
+      const chip = isActive
+        ? "Active"
+        : office.ballotType === BALLOT_TYPES.ranked
+          ? "Ranked"
+          : "Ready";
+
       return `
         <article class="queue-card ${isActive ? "queue-card-active" : ""}">
           <div>
@@ -672,7 +696,8 @@ function renderBoard() {
     ? `${office.termLabel || "Chapter-defined term"} - ${office.ruleSummary}`
     : "The president can select the next office.";
   dom.currentCandidateName.textContent = candidate?.name || "Waiting for president cue";
-  dom.currentCandidateMeta.textContent = candidate?.note || "The current speaker will appear here during speeches and Q&A.";
+  dom.currentCandidateMeta.textContent =
+    candidate?.note || "The current speaker will appear here during speeches and Q&A.";
 
   renderOfficeDetail(office);
   renderCandidateList(office);
@@ -695,6 +720,7 @@ function renderSelectOptions(selectElement, offices, selectedId) {
 
 function renderCandidateEditor() {
   const office = getEditOffice();
+
   if (!office) {
     dom.candidateEditor.innerHTML = `
       <div class="empty-state">
@@ -719,6 +745,7 @@ function renderCandidateEditor() {
                 type="button"
                 class="button ghost compact remove-candidate-button"
                 data-candidate-id="${escapeHtml(candidate.id)}"
+                ${isPresident() ? "" : "disabled"}
               >
                 Remove
               </button>
@@ -832,19 +859,91 @@ function renderResults() {
   `;
 }
 
+function renderMemberManagement() {
+  if (!isPresident()) {
+    dom.onlineMembersCard.innerHTML = `
+      <div class="empty-state">
+        <h4>Member list locked</h4>
+        <p>Only the president account can view who is online and manage access.</p>
+      </div>
+    `;
+    dom.memberDirectoryCard.innerHTML = "";
+    return;
+  }
+
+  const onlineMembers = app.memberDirectory.filter((member) => member.is_online);
+  dom.onlineMembersCard.innerHTML = `
+    <div class="results-summary">
+      <strong>Online right now</strong>
+      <span>${onlineMembers.length} member${onlineMembers.length === 1 ? "" : "s"} active</span>
+      <p>
+        ${onlineMembers.length
+          ? onlineMembers.map((member) => member.display_name).join(", ")
+          : "No active member sessions in the last two minutes."}
+      </p>
+    </div>
+  `;
+
+  dom.memberDirectoryCard.innerHTML = app.memberDirectory.length
+    ? app.memberDirectory
+        .map((member) => {
+          const isSelf = member.id === app.profile?.id;
+          const isPrimaryPresident = member.contact_email === PRESIDENT_EMAIL;
+          const roleActionLabel = member.role === ROLE_TYPES.president ? "Remove access" : "Give access";
+          const roleAction = member.role === ROLE_TYPES.president ? ROLE_TYPES.member : ROLE_TYPES.president;
+
+          return `
+            <article class="member-row ${member.is_online ? "queue-card-active" : ""}">
+              <div class="member-main">
+                <strong>${escapeHtml(member.display_name)}</strong>
+                <p>
+                  ${escapeHtml(member.member_status)} - ${escapeHtml(member.role)} - ${member.is_online ? "online" : "offline"}
+                  ${isPrimaryPresident ? " - main president account" : ""}
+                </p>
+              </div>
+              <div class="member-actions">
+                <button
+                  type="button"
+                  class="button secondary compact member-role-button"
+                  data-member-id="${escapeHtml(member.id)}"
+                  data-role="${escapeHtml(roleAction)}"
+                  ${isPrimaryPresident ? "disabled" : ""}
+                >
+                  ${escapeHtml(roleActionLabel)}
+                </button>
+                <button
+                  type="button"
+                  class="button ghost compact member-kick-button"
+                  data-member-id="${escapeHtml(member.id)}"
+                  ${isSelf ? "disabled" : ""}
+                >
+                  Kick out
+                </button>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `
+      <div class="empty-state">
+        <h4>No members yet</h4>
+        <p>Members will appear here after they create accounts or sign in.</p>
+      </div>
+    `;
+}
+
 function renderPresidentPanel() {
   const shouldShow = app.view === "president";
   dom.presidentPanel.classList.toggle("hidden", !shouldShow);
   dom.presidentRoleBadge.textContent = isPresident() ? "President access" : "Locked";
+
   renderNotice(
     dom.presidentLockNotice,
     isPresident()
       ? app.messages.admin
       : {
           text:
-            app.service.mode === "supabase"
-              ? "Ask the chapter president to mark your profile role as president in Supabase if you need console access."
-              : "Switch your demo role to president to preview the console.",
+            "Use the president sign-in button to enter the admin console, or ask a current president to grant your account access.",
           tone: "info",
         },
   );
@@ -896,9 +995,11 @@ function renderPresidentPanel() {
   ].forEach((element) => {
     element.disabled = disableControls;
   });
+
   dom.candidateForm.querySelector("button").disabled = disableControls;
   dom.customOfficeForm.querySelector("button").disabled = disableControls;
 
+  renderMemberManagement();
   renderCandidateEditor();
   renderResults();
 }
@@ -934,7 +1035,7 @@ function render() {
 
 async function refreshCurrentVote() {
   const office = getActiveOffice();
-  app.currentVote = office ? await app.service.getUserVote(office.id) : null;
+  app.currentVote = office && isSignedIn() ? await app.service.getUserVote(office.id) : null;
 }
 
 async function refreshReviewVotes() {
@@ -947,6 +1048,15 @@ async function refreshReviewVotes() {
   app.reviewVotes = office ? await app.service.getVotesForOffice(office.id) : [];
 }
 
+async function refreshMemberDirectory() {
+  if (!isPresident()) {
+    app.memberDirectory = [];
+    return;
+  }
+
+  app.memberDirectory = await app.service.listMembers();
+}
+
 async function refreshFromService() {
   const snapshot = await app.service.init();
   app.state = normalizeState(snapshot.state);
@@ -955,6 +1065,7 @@ async function refreshFromService() {
   normalizeSelectedOfficeIds();
   await refreshCurrentVote();
   await refreshReviewVotes();
+  await refreshMemberDirectory();
   render();
 }
 
@@ -980,66 +1091,30 @@ async function persistState(mutator) {
   await refreshFromService();
 }
 
-async function handleRemoteSignIn() {
-  const email = dom.emailInput.value.trim();
-  const password = dom.passwordInput.value.trim();
-  const displayName = dom.displayNameInput.value.trim();
-  const memberStatus = dom.memberStatusInput.value;
-
-  if (!email || !password) {
-    throw new Error("Enter both email and password.");
-  }
-
-  await app.service.signIn(email, password);
-  if (!app.service.profile && displayName) {
-    await app.service.saveProfile({ displayName, memberStatus });
-  }
+async function handleMemberSignIn() {
+  const name = dom.memberNameInput.value.trim();
+  const password = dom.memberPasswordInput.value.trim();
+  await app.service.signIn(name, password);
   setMessage("auth", "Signed in successfully.", "success");
+  clearMessage("ballot");
   await refreshFromService();
 }
 
-async function handleRemoteSignUp() {
-  const email = dom.emailInput.value.trim();
-  const password = dom.passwordInput.value.trim();
-  const displayName = dom.displayNameInput.value.trim();
+async function handleMemberSignUp() {
+  const name = dom.memberNameInput.value.trim();
+  const password = dom.memberPasswordInput.value.trim();
   const memberStatus = dom.memberStatusInput.value;
-
-  if (!email || !password || !displayName) {
-    throw new Error("Enter email, password, and display name to create an account.");
-  }
-
-  const result = await app.service.signUp({
-    email,
-    password,
-    displayName,
-    memberStatus,
-  });
-
-  setMessage(
-    "auth",
-    result.needsConfirmation
-      ? "Account created. Check your email for confirmation, then sign in."
-      : "Account created and signed in.",
-    "success",
-  );
+  await app.service.signUp({ name, password, memberStatus });
+  setMessage("auth", "Account created and signed in.", "success");
+  clearMessage("ballot");
   await refreshFromService();
 }
 
-async function handleLocalAuth() {
-  const displayName = dom.localDisplayName.value.trim();
-  const role = dom.localRole.value;
-  const memberStatus = dom.localMemberStatus.value;
-
-  if (!displayName) {
-    throw new Error("Enter a display name for demo mode.");
-  }
-
-  if (app.profile) {
-    await app.service.saveProfile({ displayName, memberStatus, role });
-  } else {
-    await app.service.signInLocal({ displayName, role, memberStatus });
-  }
-  setMessage("auth", "Demo identity saved.", "success");
+async function handlePresidentSignIn() {
+  const password = dom.presidentPasswordInput.value.trim();
+  await app.service.signInPresident(password);
+  app.view = "president";
+  setMessage("auth", "President console unlocked.", "success");
   await refreshFromService();
 }
 
@@ -1053,29 +1128,37 @@ async function handleBallotSubmit(event) {
   }
 
   let payload;
+
   if (office.ballotType === BALLOT_TYPES.ranked) {
     const ranking = Array.from(dom.ballotForm.querySelectorAll("select"))
       .map((select) => select.value)
       .filter(Boolean);
     const unique = [...new Set(ranking)];
+
     if (!unique.length) {
       throw new Error("Choose at least one ranked candidate.");
     }
+
     if (unique.length !== ranking.length) {
       throw new Error("Each ranked slot must contain a different candidate.");
     }
+
     payload = { ranking: unique };
   } else if (isUnopposedExec(office)) {
     const approval = dom.ballotForm.querySelector('input[name="approval"]:checked')?.value;
+
     if (!approval) {
       throw new Error("Choose approve, deny, or abstain before submitting.");
     }
+
     payload = { approval };
   } else {
     const choice = dom.ballotForm.querySelector('input[name="choice"]:checked')?.value;
+
     if (!choice) {
       throw new Error("Choose one candidate before submitting.");
     }
+
     payload = { choice };
   }
 
@@ -1095,6 +1178,7 @@ async function handleSaveBoardSetup() {
     nextState.session.announcement =
       announcement || "President may cue the next position when ready.";
   });
+
   setMessage("admin", "Board setup updated.", "success");
   render();
 }
@@ -1121,12 +1205,14 @@ async function startPhase(phaseKey) {
     nextState.session.phaseEndsAt = duration ? new Date(now + duration).toISOString() : null;
     nextState.session.announcement = `${office.name}: ${PHASES[phaseKey].label}.`;
   });
+
   setMessage("admin", `${PHASES[phaseKey].label} started.`, "success");
   render();
 }
 
 async function openVoting() {
   const office = getOfficeById(dom.activeOfficeSelect.value);
+
   if (!office) {
     throw new Error("Choose an office before opening voting.");
   }
@@ -1143,6 +1229,7 @@ async function openVoting() {
     nextState.session.phaseEndsAt = null;
     nextState.session.announcement = `${office.name}: voting is now open.`;
   });
+
   setMessage("admin", "Voting opened.", "success");
   render();
 }
@@ -1152,14 +1239,17 @@ async function closeVoting() {
     nextState.session.phase = "closed";
     nextState.session.phaseEndsAt = null;
     nextState.session.activeCandidateId = "";
-    nextState.session.announcement = "Voting is closed. Results are visible only in the president console.";
+    nextState.session.announcement =
+      "Voting is closed. Results are visible only in the president console.";
   });
+
   setMessage("admin", "Voting closed.", "success");
   render();
 }
 
 async function extendTimer() {
   const phaseKey = app.state.session.phase;
+
   if (!["speech", "qa", "discussion"].includes(phaseKey) || !app.state.session.phaseEndsAt) {
     throw new Error("Only a live timed phase can be extended.");
   }
@@ -1169,6 +1259,7 @@ async function extendTimer() {
     nextState.session.phaseEndsAt = new Date(nextEnd).toISOString();
     nextState.session.announcement = `${PHASES[phaseKey].label} extended by one minute.`;
   });
+
   setMessage("admin", "Added one minute to the timer.", "success");
   render();
 }
@@ -1181,6 +1272,7 @@ async function resetPhase() {
     nextState.session.activeCandidateId = "";
     nextState.session.announcement = "President may cue the next position when ready.";
   });
+
   setMessage("admin", "Phase reset to idle.", "success");
   render();
 }
@@ -1212,6 +1304,7 @@ async function addCandidate() {
 async function removeCandidate(candidateId) {
   const office = getEditOffice();
   const candidate = getCandidateById(office, candidateId);
+
   if (!office || !candidate) {
     return;
   }
@@ -1219,10 +1312,12 @@ async function removeCandidate(candidateId) {
   await persistState((nextState) => {
     const targetOffice = nextState.offices.find((entry) => entry.id === office.id);
     targetOffice.candidates = targetOffice.candidates.filter((entry) => entry.id !== candidateId);
+
     if (nextState.session.activeCandidateId === candidateId) {
       nextState.session.activeCandidateId = "";
     }
   });
+
   setMessage("admin", `Removed ${candidate.name} from ${office.name}.`, "success");
   render();
 }
@@ -1247,24 +1342,37 @@ async function addCustomOffice() {
   });
 
   dom.customOfficeNameInput.value = "";
-  app.editOfficeId = getOffices()[getOffices().length - 1]?.id || app.editOfficeId;
   setMessage("admin", `${name} added to the election lineup.`, "success");
   render();
 }
 
+async function handleRoleChange(memberId, role) {
+  await app.service.setMemberRole(memberId, role);
+  setMessage(
+    "admin",
+    role === ROLE_TYPES.president
+      ? "President access granted."
+      : "President access removed.",
+    "success",
+  );
+  await refreshFromService();
+}
+
+async function handleKickMember(memberId) {
+  await app.service.kickMember(memberId);
+  setMessage("admin", "Member session removed.", "success");
+  await refreshFromService();
+}
+
 function bindEvents() {
-  dom.signInButton.addEventListener("click", () =>
-    runWithErrorHandling(handleRemoteSignIn, "auth"),
+  dom.memberSignInButton.addEventListener("click", () =>
+    runWithErrorHandling(handleMemberSignIn, "auth"),
   );
-  dom.signUpButton.addEventListener("click", () =>
-    runWithErrorHandling(handleRemoteSignUp, "auth"),
+  dom.memberSignUpButton.addEventListener("click", () =>
+    runWithErrorHandling(handleMemberSignUp, "auth"),
   );
-  dom.signOutButton.addEventListener("click", () =>
-    runWithErrorHandling(async () => {
-      await app.service.signOut();
-      setMessage("auth", "Signed out.", "success");
-      await refreshFromService();
-    }, "auth"),
+  dom.presidentSignInButton.addEventListener("click", () =>
+    runWithErrorHandling(handlePresidentSignIn, "auth"),
   );
 
   dom.profileForm.addEventListener("submit", (event) =>
@@ -1273,23 +1381,27 @@ function bindEvents() {
       await app.service.saveProfile({
         displayName: dom.profileDisplayName.value.trim(),
         memberStatus: dom.profileMemberStatus.value,
+        newPassword: dom.profilePassword.value.trim(),
       });
       setMessage("auth", "Profile updated.", "success");
       await refreshFromService();
     }, "auth"),
   );
 
-  dom.localAuthForm.addEventListener("submit", (event) =>
+  dom.signOutButton.addEventListener("click", () =>
     runWithErrorHandling(async () => {
-      event.preventDefault();
-      await handleLocalAuth();
+      await app.service.signOut();
+      setMessage("auth", "Signed out.", "success");
+      app.view = "member";
+      await refreshFromService();
     }, "auth"),
   );
 
   dom.resetDemoButton.addEventListener("click", () =>
     runWithErrorHandling(async () => {
       await app.service.resetDemoData();
-      setMessage("auth", "Demo data reset.", "success");
+      setMessage("auth", "Local demo data reset.", "success");
+      app.view = "member";
       await refreshFromService();
     }, "auth"),
   );
@@ -1298,6 +1410,7 @@ function bindEvents() {
     app.view = "member";
     render();
   });
+
   dom.presidentViewButton.addEventListener("click", () => {
     app.view = "president";
     render();
@@ -1381,6 +1494,22 @@ function bindEvents() {
       await addCustomOffice();
     }, "admin"),
   );
+
+  dom.memberDirectoryCard.addEventListener("click", (event) => {
+    const roleButton = event.target.closest(".member-role-button");
+    if (roleButton) {
+      runWithErrorHandling(
+        () => handleRoleChange(roleButton.dataset.memberId, roleButton.dataset.role),
+        "admin",
+      );
+      return;
+    }
+
+    const kickButton = event.target.closest(".member-kick-button");
+    if (kickButton) {
+      runWithErrorHandling(() => handleKickMember(kickButton.dataset.memberId), "admin");
+    }
+  });
 }
 
 function cacheDom() {
@@ -1388,25 +1517,25 @@ function cacheDom() {
     "backendBadge",
     "authBadge",
     "authMessage",
-    "remoteAuthBlock",
-    "localAuthBlock",
-    "profileBlock",
-    "emailInput",
-    "passwordInput",
-    "displayNameInput",
+    "credentialBlock",
+    "presidentAccessBlock",
+    "memberNameInput",
+    "memberPasswordInput",
     "memberStatusInput",
-    "signInButton",
-    "signUpButton",
+    "memberSignInButton",
+    "memberSignUpButton",
+    "presidentPasswordInput",
+    "presidentSignInButton",
+    "backendHelpText",
+    "profileBlock",
     "profileHeading",
     "profileSummaryText",
     "profileForm",
     "profileDisplayName",
     "profileMemberStatus",
+    "profilePassword",
     "signOutButton",
-    "localAuthForm",
-    "localDisplayName",
-    "localRole",
-    "localMemberStatus",
+    "localToolsBlock",
     "resetDemoButton",
     "memberViewButton",
     "presidentViewButton",
@@ -1428,6 +1557,8 @@ function cacheDom() {
     "presidentPanel",
     "presidentRoleBadge",
     "presidentLockNotice",
+    "onlineMembersCard",
+    "memberDirectoryCard",
     "activeOfficeSelect",
     "activeCandidateSelect",
     "announcementInput",
@@ -1459,6 +1590,7 @@ function startBackgroundSync() {
   if (app.syncHandle) {
     window.clearInterval(app.syncHandle);
   }
+
   if (app.tickerHandle) {
     window.clearInterval(app.tickerHandle);
   }
