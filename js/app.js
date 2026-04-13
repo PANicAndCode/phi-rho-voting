@@ -24,6 +24,8 @@ const app = {
   currentVote: null,
   reviewVotes: [],
   memberDirectory: [],
+  adminDraft: null,
+  ballotDraft: null,
   syncHandle: null,
   tickerHandle: null,
   messages: {
@@ -137,6 +139,61 @@ function normalizeSelectedOfficeIds() {
   if (!getOfficeById(app.editOfficeId)) {
     app.editOfficeId = activeOffice?.id || "";
   }
+}
+
+function getPersistedAdminState() {
+  return {
+    activeOfficeId: app.state.session.activeOfficeId || getOffices()[0]?.id || "",
+    activeCandidateId: app.state.session.activeCandidateId || "",
+    announcement: app.state.session.announcement || "",
+  };
+}
+
+function syncAdminDraftFromState(force = false) {
+  const persisted = getPersistedAdminState();
+
+  if (force || !app.adminDraft) {
+    app.adminDraft = { ...persisted };
+  }
+
+  if (!getOfficeById(app.adminDraft.activeOfficeId)) {
+    app.adminDraft.activeOfficeId = persisted.activeOfficeId;
+  }
+
+  const draftOffice =
+    getOfficeById(app.adminDraft.activeOfficeId) || getOfficeById(persisted.activeOfficeId);
+
+  if (!getCandidateById(draftOffice, app.adminDraft.activeCandidateId)) {
+    app.adminDraft.activeCandidateId = "";
+  }
+
+  if (typeof app.adminDraft.announcement !== "string") {
+    app.adminDraft.announcement = persisted.announcement;
+  }
+
+  return app.adminDraft;
+}
+
+function readBallotDraftFromDom(office) {
+  if (!office) {
+    return null;
+  }
+
+  if (office.ballotType === BALLOT_TYPES.ranked) {
+    return {
+      ranking: Array.from(dom.ballotForm.querySelectorAll("select")).map((select) => select.value),
+    };
+  }
+
+  if (isUnopposedExec(office)) {
+    return {
+      approval: dom.ballotForm.querySelector('input[name="approval"]:checked')?.value || "",
+    };
+  }
+
+  return {
+    choice: dom.ballotForm.querySelector('input[name="choice"]:checked')?.value || "",
+  };
 }
 
 function formatCountdown(ms) {
@@ -554,7 +611,10 @@ function renderBallotForm(office) {
     return;
   }
 
-  const existingPayload = app.currentVote?.ballot_payload || {};
+  const existingPayload =
+    (app.ballotDraft?.officeId === office.id ? app.ballotDraft.payload : null) ||
+    app.currentVote?.ballot_payload ||
+    {};
   const candidates = getCandidates(office);
   let ballotFields = "";
 
@@ -721,6 +781,21 @@ function renderSelectOptions(selectElement, offices, selectedId) {
       `,
     )
     .join("");
+}
+
+function renderCandidateOptions(selectElement, office, selectedId = "") {
+  selectElement.innerHTML = `
+    <option value="">No candidate selected</option>
+    ${getCandidates(office)
+      .map(
+        (candidate) => `
+          <option value="${escapeHtml(candidate.id)}" ${candidate.id === selectedId ? "selected" : ""}>
+            ${escapeHtml(candidate.name)}
+          </option>
+        `,
+      )
+      .join("")}
+  `;
 }
 
 function renderCandidateEditor() {
@@ -922,7 +997,7 @@ function renderMemberManagement() {
                   data-member-id="${escapeHtml(member.id)}"
                   ${isSelf ? "disabled" : ""}
                 >
-                  Kick out
+                  Remove member
                 </button>
               </div>
             </article>
@@ -942,35 +1017,25 @@ function renderPresidentPanel() {
   dom.presidentPanel.classList.toggle("hidden", !shouldShow);
 
   if (!shouldShow) {
+    app.adminDraft = null;
     return;
   }
 
+  const adminState = syncAdminDraftFromState();
   dom.presidentRoleBadge.textContent = "President access";
   renderNotice(dom.presidentLockNotice, app.messages.admin);
 
   const offices = getOffices();
-  renderSelectOptions(dom.activeOfficeSelect, offices, app.state.session.activeOfficeId);
+  renderSelectOptions(dom.activeOfficeSelect, offices, adminState.activeOfficeId);
   renderSelectOptions(dom.editOfficeSelect, offices, app.editOfficeId);
   renderSelectOptions(dom.resultsOfficeSelect, offices, app.reviewOfficeId);
 
-  const activeOffice = getActiveOffice();
-  const activeCandidates = getCandidates(activeOffice);
-  dom.activeCandidateSelect.innerHTML = `
-    <option value="">No candidate selected</option>
-    ${activeCandidates
-      .map(
-        (candidate) => `
-          <option
-            value="${escapeHtml(candidate.id)}"
-            ${candidate.id === app.state.session.activeCandidateId ? "selected" : ""}
-          >
-            ${escapeHtml(candidate.name)}
-          </option>
-        `,
-      )
-      .join("")}
-  `;
-  dom.announcementInput.value = app.state.session.announcement || "";
+  const activeOffice = getOfficeById(adminState.activeOfficeId) || getActiveOffice();
+  renderCandidateOptions(dom.activeCandidateSelect, activeOffice, adminState.activeCandidateId);
+
+  if (document.activeElement !== dom.announcementInput) {
+    dom.announcementInput.value = adminState.announcement || "";
+  }
 
   const disableControls = !isPresident();
   [
@@ -1065,6 +1130,15 @@ async function refreshFromService() {
   app.state = normalizeState(snapshot.state);
   app.profile = snapshot.profile;
   app.session = snapshot.session;
+
+  if (!isPresident()) {
+    app.adminDraft = null;
+  }
+
+  if (!isSignedIn()) {
+    app.ballotDraft = null;
+  }
+
   normalizeSelectedOfficeIds();
   await refreshCurrentVote();
   await refreshReviewVotes();
@@ -1098,6 +1172,8 @@ async function handleMemberSignIn() {
   const name = dom.memberNameInput.value.trim();
   const password = dom.memberPasswordInput.value.trim();
   await app.service.signIn(name, password);
+  app.adminDraft = null;
+  app.ballotDraft = null;
   setMessage("auth", "Signed in successfully.", "success");
   clearMessage("ballot");
   await refreshFromService();
@@ -1108,6 +1184,8 @@ async function handleMemberSignUp() {
   const password = dom.memberPasswordInput.value.trim();
   const memberStatus = dom.memberStatusInput.value;
   await app.service.signUp({ name, password, memberStatus });
+  app.adminDraft = null;
+  app.ballotDraft = null;
   setMessage("auth", "Account created and signed in.", "success");
   clearMessage("ballot");
   await refreshFromService();
@@ -1116,6 +1194,8 @@ async function handleMemberSignUp() {
 async function handlePresidentSignIn() {
   const password = dom.presidentPasswordInput.value.trim();
   await app.service.signInPresident(password);
+  app.adminDraft = null;
+  app.ballotDraft = null;
   app.view = "president";
   setMessage("auth", "President console unlocked.", "success");
   await refreshFromService();
@@ -1166,6 +1246,7 @@ async function handleBallotSubmit(event) {
   }
 
   await app.service.submitVote(office.id, payload);
+  app.ballotDraft = null;
   setMessage("ballot", "Ballot saved.", "success");
   await refreshFromService();
 }
@@ -1182,6 +1263,7 @@ async function handleSaveBoardSetup() {
       announcement || "President may cue the next position when ready.";
   });
 
+  app.adminDraft = null;
   setMessage("admin", "Board setup updated.", "success");
   render();
 }
@@ -1209,6 +1291,7 @@ async function startPhase(phaseKey) {
     nextState.session.announcement = `${office.name}: ${PHASES[phaseKey].label}.`;
   });
 
+  app.adminDraft = null;
   setMessage("admin", `${PHASES[phaseKey].label} started.`, "success");
   render();
 }
@@ -1233,6 +1316,7 @@ async function openVoting() {
     nextState.session.announcement = `${office.name}: voting is now open.`;
   });
 
+  app.adminDraft = null;
   setMessage("admin", "Voting opened.", "success");
   render();
 }
@@ -1246,6 +1330,7 @@ async function closeVoting() {
       "Voting is closed. Results are visible only in the president console.";
   });
 
+  app.adminDraft = null;
   setMessage("admin", "Voting closed.", "success");
   render();
 }
@@ -1263,6 +1348,7 @@ async function extendTimer() {
     nextState.session.announcement = `${PHASES[phaseKey].label} extended by one minute.`;
   });
 
+  app.adminDraft = null;
   setMessage("admin", "Added one minute to the timer.", "success");
   render();
 }
@@ -1276,6 +1362,7 @@ async function resetPhase() {
     nextState.session.announcement = "President may cue the next position when ready.";
   });
 
+  app.adminDraft = null;
   setMessage("admin", "Phase reset to idle.", "success");
   render();
 }
@@ -1363,7 +1450,7 @@ async function handleRoleChange(memberId, role) {
 
 async function handleKickMember(memberId) {
   await app.service.kickMember(memberId);
-  setMessage("admin", "Member session removed.", "success");
+  setMessage("admin", "Member account removed.", "success");
   await refreshFromService();
 }
 
@@ -1394,6 +1481,8 @@ function bindEvents() {
   dom.signOutButton.addEventListener("click", () =>
     runWithErrorHandling(async () => {
       await app.service.signOut();
+      app.adminDraft = null;
+      app.ballotDraft = null;
       setMessage("auth", "Signed out.", "success");
       app.view = "member";
       await refreshFromService();
@@ -1403,6 +1492,8 @@ function bindEvents() {
   dom.resetDemoButton.addEventListener("click", () =>
     runWithErrorHandling(async () => {
       await app.service.resetDemoData();
+      app.adminDraft = null;
+      app.ballotDraft = null;
       setMessage("auth", "Local demo data reset.", "success");
       app.view = "member";
       await refreshFromService();
@@ -1429,18 +1520,37 @@ function bindEvents() {
     runWithErrorHandling(() => handleBallotSubmit(event), "ballot"),
   );
 
+  dom.ballotForm.addEventListener("change", () => {
+    const office = getActiveOffice();
+    if (!office) {
+      app.ballotDraft = null;
+      return;
+    }
+
+    app.ballotDraft = {
+      officeId: office.id,
+      payload: readBallotDraftFromDom(office),
+    };
+  });
+
   dom.activeOfficeSelect.addEventListener("change", () => {
     const office = getOfficeById(dom.activeOfficeSelect.value);
-    dom.activeCandidateSelect.innerHTML = `
-      <option value="">No candidate selected</option>
-      ${getCandidates(office)
-        .map(
-          (candidate) => `
-            <option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.name)}</option>
-          `,
-        )
-        .join("")}
-    `;
+    const adminState = syncAdminDraftFromState();
+    adminState.activeOfficeId = dom.activeOfficeSelect.value;
+
+    if (!getCandidateById(office, adminState.activeCandidateId)) {
+      adminState.activeCandidateId = "";
+    }
+
+    renderCandidateOptions(dom.activeCandidateSelect, office, adminState.activeCandidateId);
+  });
+
+  dom.activeCandidateSelect.addEventListener("change", () => {
+    syncAdminDraftFromState().activeCandidateId = dom.activeCandidateSelect.value;
+  });
+
+  dom.announcementInput.addEventListener("input", () => {
+    syncAdminDraftFromState().announcement = dom.announcementInput.value;
   });
 
   dom.editOfficeSelect.addEventListener("change", () => {

@@ -35,9 +35,10 @@ window.PHI_RHO_CONFIG = {
 
 4. The schema now creates or resets the fixed president account automatically. The default president password is `P3ngu!n84`.
 5. If your project already had the older schema, run [supabase/reset-president-account.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/reset-president-account.sql).
+6. If your project was already live before the account-removal update, run [supabase/update-kick-member-function.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/update-kick-member-function.sql).
 
-6. Open the site. Members can create accounts immediately with their name and password.
-7. The president signs in with the dedicated president button and the password from step 4.
+7. Open the site. Members can create accounts immediately with their name and password.
+8. The president signs in with the dedicated president button and the password from step 4.
 
 ## How access works
 

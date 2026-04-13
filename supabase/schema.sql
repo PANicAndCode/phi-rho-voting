@@ -673,6 +673,7 @@ set search_path = public
 as $$
 declare
   v_president_id uuid;
+  v_member public.members%rowtype;
 begin
   v_president_id := public.assert_president(p_session_token);
 
@@ -680,11 +681,21 @@ begin
     raise exception 'Use sign out instead of kicking your own session.';
   end if;
 
-  update public.member_sessions
-  set revoked_at = now(),
-      revoked_reason = 'kicked by president'
-  where member_id = p_member_id
-    and revoked_at is null;
+  select * into v_member
+  from public.members
+  where id = p_member_id
+    and removed_at is null;
+
+  if not found then
+    raise exception 'Member not found.';
+  end if;
+
+  if v_member.contact_email = public.president_login_email() then
+    raise exception 'The main president account cannot be removed.';
+  end if;
+
+  delete from public.members
+  where id = p_member_id;
 end;
 $$;
 

@@ -480,21 +480,27 @@ export class LocalElectionService {
 
   async kickMember(memberId) {
     this.assertPresident();
-    this.sessions = this.sessions.map((session) =>
-      session.member_id === memberId && !session.revoked_at
-        ? {
-            ...session,
-            revoked_at: nowIso(),
-            revoked_reason: "kicked by president",
-          }
-        : session,
+    const member = this.members.find((entry) => entry.id === memberId);
+
+    if (!member) {
+      throw new Error("Member not found.");
+    }
+
+    if (member.contact_email === PRESIDENT_EMAIL) {
+      throw new Error("The main president account cannot be removed.");
+    }
+
+    this.members = this.members.filter((entry) => entry.id !== memberId);
+    this.sessions = this.sessions.filter((session) => session.member_id !== memberId);
+    this.votes = Object.fromEntries(
+      Object.entries(this.votes).filter(([, vote]) => vote.voter_id !== memberId),
     );
 
     if (this.profile?.id === memberId) {
       this.clearSessionToken();
     }
 
-    writeJson(LOCAL_SESSIONS_KEY, this.sessions);
+    this.persistCollections();
     return true;
   }
 }
