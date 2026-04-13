@@ -89,6 +89,12 @@ function isPresident() {
   return getRole() === ROLE_TYPES.president;
 }
 
+function enforceViewAccess() {
+  if (app.view === "president" && !isPresident()) {
+    app.view = "member";
+  }
+}
+
 function getOffices() {
   return Array.isArray(app.state.offices) ? app.state.offices : [];
 }
@@ -434,6 +440,7 @@ function computeResults(office, votes) {
 
 function renderAuth() {
   const isRemote = app.service.mode === "supabase";
+  const profileFormFocused = dom.profileForm.contains(document.activeElement);
   dom.backendBadge.textContent = isRemote ? "Supabase live sync" : "Local demo only";
   dom.backendHelpText.textContent = isRemote
     ? "The live version uses Supabase, but members still sign in only with a name and password. No email verification is required."
@@ -459,13 +466,11 @@ function renderAuth() {
     ]
       .filter(Boolean)
       .join(" - ");
-    dom.profileDisplayName.value = app.profile.display_name || "";
-    dom.profileMemberStatus.value = app.profile.member_status || MEMBER_STATUSES.active;
-    dom.profilePassword.value = "";
-  } else {
-    dom.memberNameInput.value = "";
-    dom.memberPasswordInput.value = "";
-    dom.presidentPasswordInput.value = "";
+    if (!profileFormFocused) {
+      dom.profileDisplayName.value = app.profile.display_name || "";
+      dom.profileMemberStatus.value = app.profile.member_status || MEMBER_STATUSES.active;
+      dom.profilePassword.value = "";
+    }
   }
 
   renderNotice(dom.authMessage, app.messages.auth);
@@ -933,20 +938,15 @@ function renderMemberManagement() {
 }
 
 function renderPresidentPanel() {
-  const shouldShow = app.view === "president";
+  const shouldShow = app.view === "president" && isPresident();
   dom.presidentPanel.classList.toggle("hidden", !shouldShow);
-  dom.presidentRoleBadge.textContent = isPresident() ? "President access" : "Locked";
 
-  renderNotice(
-    dom.presidentLockNotice,
-    isPresident()
-      ? app.messages.admin
-      : {
-          text:
-            "Use the president sign-in button to enter the admin console, or ask a current president to grant your account access.",
-          tone: "info",
-        },
-  );
+  if (!shouldShow) {
+    return;
+  }
+
+  dom.presidentRoleBadge.textContent = "President access";
+  renderNotice(dom.presidentLockNotice, app.messages.admin);
 
   const offices = getOffices();
   renderSelectOptions(dom.activeOfficeSelect, offices, app.state.session.activeOfficeId);
@@ -1019,13 +1019,16 @@ function updateTimerDisplay() {
 }
 
 function renderViewButtons() {
+  const presidentViewActive = app.view === "president" && isPresident();
   dom.memberViewButton.classList.toggle("primary", app.view === "member");
   dom.memberViewButton.classList.toggle("secondary", app.view !== "member");
-  dom.presidentViewButton.classList.toggle("primary", app.view === "president");
-  dom.presidentViewButton.classList.toggle("ghost", app.view !== "president");
+  dom.presidentViewButton.classList.toggle("hidden", !isPresident());
+  dom.presidentViewButton.classList.toggle("primary", presidentViewActive);
+  dom.presidentViewButton.classList.toggle("ghost", !presidentViewActive);
 }
 
 function render() {
+  enforceViewAccess();
   normalizeSelectedOfficeIds();
   renderAuth();
   renderViewButtons();
@@ -1412,6 +1415,12 @@ function bindEvents() {
   });
 
   dom.presidentViewButton.addEventListener("click", () => {
+    if (!isPresident()) {
+      app.view = "member";
+      render();
+      return;
+    }
+
     app.view = "president";
     render();
   });

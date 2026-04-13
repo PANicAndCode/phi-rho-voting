@@ -7,6 +7,7 @@ const LOCAL_VOTES_KEY = "phi-rho-election-votes-v2";
 const LOCAL_SESSIONS_KEY = "phi-rho-election-sessions-v2";
 const LOCAL_SESSION_TOKEN_KEY = "phi-rho-election-session-token-v2";
 const PRESIDENT_EMAIL = "president.psr.rho@gmail.com";
+const DEFAULT_PRESIDENT_PASSWORD = "P3ngu!n84";
 const ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
 function readJson(key, fallbackValue) {
@@ -121,11 +122,16 @@ export class LocalElectionService {
     this.votes = readJson(LOCAL_VOTES_KEY, this.votes);
     this.sessions = readJson(LOCAL_SESSIONS_KEY, this.sessions);
     this.sessionToken = window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || null;
+    const { changed } = this.ensurePrimaryPresidentRecord();
 
     if (this.sessionToken) {
       await this.touchSession();
     } else {
       this.profile = null;
+    }
+
+    if (changed) {
+      this.persistCollections();
     }
 
     return this.snapshot();
@@ -158,6 +164,70 @@ export class LocalElectionService {
       throw new Error("Only the president can use that control.");
     }
     return member;
+  }
+
+  ensurePrimaryPresidentRecord(forceDefaultPassword = false) {
+    let member =
+      this.members.find((entry) => entry.contact_email === PRESIDENT_EMAIL) || null;
+    let changed = false;
+
+    if (!member) {
+      member = {
+        id: randomId("member"),
+        login_name: "President",
+        login_name_normalized: normalizeName("President"),
+        display_name: "President",
+        password: DEFAULT_PRESIDENT_PASSWORD,
+        role: ROLE_TYPES.president,
+        member_status: MEMBER_STATUSES.active,
+        contact_email: PRESIDENT_EMAIL,
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      this.members.push(member);
+      return { member, changed: true };
+    }
+
+    if (member.role !== ROLE_TYPES.president) {
+      member.role = ROLE_TYPES.president;
+      changed = true;
+    }
+
+    if (member.contact_email !== PRESIDENT_EMAIL) {
+      member.contact_email = PRESIDENT_EMAIL;
+      changed = true;
+    }
+
+    if (!member.member_status) {
+      member.member_status = MEMBER_STATUSES.active;
+      changed = true;
+    }
+
+    if (!member.login_name) {
+      member.login_name = "President";
+      changed = true;
+    }
+
+    if (!member.login_name_normalized) {
+      member.login_name_normalized = normalizeName(member.login_name);
+      changed = true;
+    }
+
+    if (!member.display_name) {
+      member.display_name = member.login_name || "President";
+      changed = true;
+    }
+
+    if (forceDefaultPassword && member.password !== DEFAULT_PRESIDENT_PASSWORD) {
+      member.password = DEFAULT_PRESIDENT_PASSWORD;
+      changed = true;
+    }
+
+    if (changed) {
+      member.updated_at = nowIso();
+    }
+
+    return { member, changed };
   }
 
   createSessionForMember(member) {
@@ -217,24 +287,15 @@ export class LocalElectionService {
 
   async signInPresident(password) {
     validateCredentials("President", password);
-    let member =
-      this.members.find((entry) => entry.contact_email === PRESIDENT_EMAIL) || null;
+    const { member, changed } = this.ensurePrimaryPresidentRecord(
+      password === DEFAULT_PRESIDENT_PASSWORD,
+    );
 
-    if (!member) {
-      member = {
-        id: randomId("member"),
-        login_name: "President",
-        login_name_normalized: normalizeName("President"),
-        display_name: "President",
-        password,
-        role: ROLE_TYPES.president,
-        member_status: MEMBER_STATUSES.active,
-        contact_email: PRESIDENT_EMAIL,
-        created_at: nowIso(),
-        updated_at: nowIso(),
-      };
-      this.members.push(member);
-    } else if (member.password !== password) {
+    if (changed) {
+      this.persistCollections();
+    }
+
+    if (member.password !== password) {
       throw new Error("The president password is incorrect.");
     }
 
