@@ -1,4 +1,4 @@
 window.PHI_RHO_CONFIG = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://bvfbzrjuwgzbkzyqdzfu.supabase.co",
+  supabaseAnonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ2ZmJ6cmp1d2d6Ymt6eXFkemZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYwMzgyOTcsImV4cCI6MjA5MTYxNDI5N30.fKfAlh6VaAvGHTRDWja_qhgqaGl7H1j588TiPFXe7Y8",
 };
