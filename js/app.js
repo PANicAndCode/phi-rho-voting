@@ -26,12 +26,15 @@ const app = {
   memberDirectory: [],
   adminDraft: null,
   ballotDraft: null,
+  candidateNotes: {},
+  candidateNoteDrafts: {},
   syncHandle: null,
   tickerHandle: null,
   messages: {
     auth: null,
     ballot: null,
     admin: null,
+    notes: null,
   },
 };
 
@@ -194,6 +197,40 @@ function readBallotDraftFromDom(office) {
   return {
     choice: dom.ballotForm.querySelector('input[name="choice"]:checked')?.value || "",
   };
+}
+
+function getCandidateNoteKey(officeId, candidateId) {
+  return `${officeId}::${candidateId}`;
+}
+
+function replaceCandidateNotesForOffice(officeId, notes) {
+  const nextEntries = Object.entries(app.candidateNotes).filter(
+    ([key]) => !key.startsWith(`${officeId}::`),
+  );
+
+  notes.forEach((note) => {
+    nextEntries.push([getCandidateNoteKey(note.office_id, note.candidate_id), note]);
+  });
+
+  app.candidateNotes = Object.fromEntries(nextEntries);
+}
+
+function getSavedCandidateNote(officeId, candidateId) {
+  return app.candidateNotes[getCandidateNoteKey(officeId, candidateId)] || null;
+}
+
+function getCandidateNoteValue(officeId, candidateId) {
+  const draftKey = getCandidateNoteKey(officeId, candidateId);
+  if (Object.prototype.hasOwnProperty.call(app.candidateNoteDrafts, draftKey)) {
+    return app.candidateNoteDrafts[draftKey];
+  }
+
+  return getSavedCandidateNote(officeId, candidateId)?.note_text || "";
+}
+
+function clearCandidateNoteState() {
+  app.candidateNotes = {};
+  app.candidateNoteDrafts = {};
 }
 
 function formatCountdown(ms) {
@@ -565,6 +602,14 @@ function renderOfficeDetail(office) {
 
 function renderCandidateList(office) {
   const candidates = getCandidates(office);
+  const focusedInput =
+    dom.candidateList.contains(document.activeElement) &&
+    document.activeElement?.classList?.contains("candidate-note-input")
+      ? document.activeElement
+      : null;
+  const focusedCandidateId = focusedInput?.dataset.candidateId || "";
+  const selectionStart = focusedInput?.selectionStart ?? null;
+  const selectionEnd = focusedInput?.selectionEnd ?? null;
 
   if (!office || !candidates.length) {
     dom.candidateList.innerHTML = `
@@ -579,18 +624,82 @@ function renderCandidateList(office) {
   dom.candidateList.innerHTML = candidates
     .map((candidate) => {
       const isActiveSpeaker = app.state.session.activeCandidateId === candidate.id;
+      const savedNote = getSavedCandidateNote(office.id, candidate.id);
+      const noteValue = getCandidateNoteValue(office.id, candidate.id);
 
       return `
         <article class="candidate-card ${isActiveSpeaker ? "active-speaker" : ""}">
-          <div>
-            <h4>${escapeHtml(candidate.name)}</h4>
-            <p>${escapeHtml(candidate.note || "Candidate added to the slate.")}</p>
+          <div class="candidate-top">
+            <div>
+              <h4>${escapeHtml(candidate.name)}</h4>
+              <p>${escapeHtml(candidate.note || "Candidate added to the slate.")}</p>
+            </div>
+            ${isActiveSpeaker ? '<span class="status-pill">Current speaker</span>' : ""}
           </div>
-          ${isActiveSpeaker ? '<span class="status-pill">Current speaker</span>' : ""}
+          ${
+            isSignedIn()
+              ? `
+                <div class="candidate-note-panel">
+                  <label class="candidate-note-label" for="candidate-note-${escapeHtml(candidate.id)}">
+                    Private notes
+                  </label>
+                  <textarea
+                    id="candidate-note-${escapeHtml(candidate.id)}"
+                    class="candidate-note-input"
+                    data-candidate-id="${escapeHtml(candidate.id)}"
+                    rows="3"
+                    placeholder="Jot down reminders, talking points, or questions."
+                  >${escapeHtml(noteValue)}</textarea>
+                  <div class="candidate-note-actions">
+                    <span class="candidate-note-meta">
+                      ${
+                        savedNote?.updated_at
+                          ? `Saved ${escapeHtml(formatDateTime(savedNote.updated_at))}`
+                          : "Only visible to your account"
+                      }
+                    </span>
+                    <div class="button-row">
+                      <button
+                        type="button"
+                        class="button ghost compact candidate-note-clear-button"
+                        data-candidate-id="${escapeHtml(candidate.id)}"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        class="button secondary compact candidate-note-save-button"
+                        data-candidate-id="${escapeHtml(candidate.id)}"
+                      >
+                        Save note
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              `
+              : `
+                <p class="candidate-note-lock">
+                  Sign in to keep private notes on each candidate.
+                </p>
+              `
+          }
         </article>
       `;
     })
     .join("");
+
+  if (focusedCandidateId) {
+    const nextFocusedInput = Array.from(
+      dom.candidateList.querySelectorAll(".candidate-note-input"),
+    ).find((input) => input.dataset.candidateId === focusedCandidateId);
+
+    if (nextFocusedInput) {
+      nextFocusedInput.focus();
+      if (selectionStart !== null && selectionEnd !== null) {
+        nextFocusedInput.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
 }
 
 function renderBallotForm(office) {
@@ -766,6 +875,7 @@ function renderBoard() {
 
   renderOfficeDetail(office);
   renderCandidateList(office);
+  renderNotice(dom.notesMessage, app.messages.notes);
   renderBallotForm(office);
   renderOfficeQueue();
   updateTimerDisplay();
@@ -1106,6 +1216,18 @@ async function refreshCurrentVote() {
   app.currentVote = office && isSignedIn() ? await app.service.getUserVote(office.id) : null;
 }
 
+async function refreshCandidateNotes() {
+  const office = getActiveOffice();
+
+  if (!office || !isSignedIn()) {
+    app.candidateNotes = {};
+    return;
+  }
+
+  const notes = (await app.service.getCandidateNotes(office.id)) || [];
+  replaceCandidateNotesForOffice(office.id, notes);
+}
+
 async function refreshReviewVotes() {
   if (!isPresident()) {
     app.reviewVotes = [];
@@ -1137,10 +1259,13 @@ async function refreshFromService() {
 
   if (!isSignedIn()) {
     app.ballotDraft = null;
+    clearCandidateNoteState();
+    clearMessage("notes");
   }
 
   normalizeSelectedOfficeIds();
   await refreshCurrentVote();
+  await refreshCandidateNotes();
   await refreshReviewVotes();
   await refreshMemberDirectory();
   render();
@@ -1174,6 +1299,8 @@ async function handleMemberSignIn() {
   await app.service.signIn(name, password);
   app.adminDraft = null;
   app.ballotDraft = null;
+  clearCandidateNoteState();
+  clearMessage("notes");
   setMessage("auth", "Signed in successfully.", "success");
   clearMessage("ballot");
   await refreshFromService();
@@ -1186,6 +1313,8 @@ async function handleMemberSignUp() {
   await app.service.signUp({ name, password, memberStatus });
   app.adminDraft = null;
   app.ballotDraft = null;
+  clearCandidateNoteState();
+  clearMessage("notes");
   setMessage("auth", "Account created and signed in.", "success");
   clearMessage("ballot");
   await refreshFromService();
@@ -1196,6 +1325,8 @@ async function handlePresidentSignIn() {
   await app.service.signInPresident(password);
   app.adminDraft = null;
   app.ballotDraft = null;
+  clearCandidateNoteState();
+  clearMessage("notes");
   app.view = "president";
   setMessage("auth", "President console unlocked.", "success");
   await refreshFromService();
@@ -1249,6 +1380,25 @@ async function handleBallotSubmit(event) {
   app.ballotDraft = null;
   setMessage("ballot", "Ballot saved.", "success");
   await refreshFromService();
+}
+
+async function handleCandidateNoteSave(candidateId, nextValue) {
+  const office = getActiveOffice();
+
+  if (!office) {
+    throw new Error("Choose an office before saving notes.");
+  }
+
+  if (!isSignedIn()) {
+    throw new Error("Sign in before saving private candidate notes.");
+  }
+
+  const noteText = String(nextValue ?? getCandidateNoteValue(office.id, candidateId));
+  app.candidateNoteDrafts[getCandidateNoteKey(office.id, candidateId)] = noteText;
+  await app.service.saveCandidateNote(office.id, candidateId, noteText);
+  await refreshCandidateNotes();
+  setMessage("notes", noteText.trim() ? "Candidate note saved." : "Candidate note cleared.", "success");
+  renderBoard();
 }
 
 async function handleSaveBoardSetup() {
@@ -1483,6 +1633,8 @@ function bindEvents() {
       await app.service.signOut();
       app.adminDraft = null;
       app.ballotDraft = null;
+      clearCandidateNoteState();
+      clearMessage("notes");
       setMessage("auth", "Signed out.", "success");
       app.view = "member";
       await refreshFromService();
@@ -1494,6 +1646,8 @@ function bindEvents() {
       await app.service.resetDemoData();
       app.adminDraft = null;
       app.ballotDraft = null;
+      clearCandidateNoteState();
+      clearMessage("notes");
       setMessage("auth", "Local demo data reset.", "success");
       app.view = "member";
       await refreshFromService();
@@ -1531,6 +1685,48 @@ function bindEvents() {
       officeId: office.id,
       payload: readBallotDraftFromDom(office),
     };
+  });
+
+  dom.candidateList.addEventListener("input", (event) => {
+    const input = event.target.closest(".candidate-note-input");
+    if (!input) {
+      return;
+    }
+
+    const office = getActiveOffice();
+    if (!office) {
+      return;
+    }
+
+    app.candidateNoteDrafts[getCandidateNoteKey(office.id, input.dataset.candidateId)] =
+      input.value;
+  });
+
+  dom.candidateList.addEventListener("click", (event) => {
+    const saveButton = event.target.closest(".candidate-note-save-button");
+    if (saveButton) {
+      runWithErrorHandling(
+        () => handleCandidateNoteSave(saveButton.dataset.candidateId),
+        "notes",
+      );
+      return;
+    }
+
+    const clearButton = event.target.closest(".candidate-note-clear-button");
+    if (!clearButton) {
+      return;
+    }
+
+    const office = getActiveOffice();
+    if (!office) {
+      return;
+    }
+
+    app.candidateNoteDrafts[getCandidateNoteKey(office.id, clearButton.dataset.candidateId)] = "";
+    runWithErrorHandling(
+      () => handleCandidateNoteSave(clearButton.dataset.candidateId, ""),
+      "notes",
+    );
   });
 
   dom.activeOfficeSelect.addEventListener("change", () => {
@@ -1668,6 +1864,7 @@ function cacheDom() {
     "currentCandidateMeta",
     "officeDetailCard",
     "candidateList",
+    "notesMessage",
     "ballotStatusPill",
     "ballotNotice",
     "ballotForm",

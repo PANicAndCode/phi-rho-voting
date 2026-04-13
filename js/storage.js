@@ -4,6 +4,7 @@ import { createInitialState, MEMBER_STATUSES, normalizeState, ROLE_TYPES } from 
 const LOCAL_STATE_KEY = "phi-rho-election-state-v2";
 const LOCAL_MEMBERS_KEY = "phi-rho-election-members-v2";
 const LOCAL_VOTES_KEY = "phi-rho-election-votes-v2";
+const LOCAL_CANDIDATE_NOTES_KEY = "phi-rho-election-candidate-notes-v1";
 const LOCAL_SESSIONS_KEY = "phi-rho-election-sessions-v2";
 const LOCAL_SESSION_TOKEN_KEY = "phi-rho-election-session-token-v2";
 const PRESIDENT_EMAIL = "president.psr.rho@gmail.com";
@@ -98,6 +99,7 @@ export class LocalElectionService {
     this.state = normalizeState(readJson(LOCAL_STATE_KEY, createInitialState()));
     this.members = readJson(LOCAL_MEMBERS_KEY, []);
     this.votes = readJson(LOCAL_VOTES_KEY, {});
+    this.candidateNotes = readJson(LOCAL_CANDIDATE_NOTES_KEY, {});
     this.sessions = readJson(LOCAL_SESSIONS_KEY, []);
     this.sessionToken = window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || null;
     this.profile = null;
@@ -107,6 +109,7 @@ export class LocalElectionService {
     writeJson(LOCAL_STATE_KEY, this.state);
     writeJson(LOCAL_MEMBERS_KEY, this.members);
     writeJson(LOCAL_VOTES_KEY, this.votes);
+    writeJson(LOCAL_CANDIDATE_NOTES_KEY, this.candidateNotes);
     writeJson(LOCAL_SESSIONS_KEY, this.sessions);
   }
 
@@ -120,6 +123,7 @@ export class LocalElectionService {
     this.state = normalizeState(readJson(LOCAL_STATE_KEY, this.state));
     this.members = readJson(LOCAL_MEMBERS_KEY, this.members);
     this.votes = readJson(LOCAL_VOTES_KEY, this.votes);
+    this.candidateNotes = readJson(LOCAL_CANDIDATE_NOTES_KEY, this.candidateNotes);
     this.sessions = readJson(LOCAL_SESSIONS_KEY, this.sessions);
     this.sessionToken = window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || null;
     const { changed } = this.ensurePrimaryPresidentRecord();
@@ -352,11 +356,13 @@ export class LocalElectionService {
     this.state = createInitialState();
     this.members = [];
     this.votes = {};
+    this.candidateNotes = {};
     this.sessions = [];
     this.clearSessionToken();
     window.localStorage.removeItem(LOCAL_STATE_KEY);
     window.localStorage.removeItem(LOCAL_MEMBERS_KEY);
     window.localStorage.removeItem(LOCAL_VOTES_KEY);
+    window.localStorage.removeItem(LOCAL_CANDIDATE_NOTES_KEY);
     window.localStorage.removeItem(LOCAL_SESSIONS_KEY);
     return this.snapshot();
   }
@@ -429,6 +435,18 @@ export class LocalElectionService {
     );
   }
 
+  async getCandidateNotes(officeId) {
+    if (!this.profile) {
+      return [];
+    }
+
+    return Object.values(this.candidateNotes)
+      .filter(
+        (note) => note.office_id === officeId && note.member_id === this.profile.id,
+      )
+      .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+  }
+
   async getVotesForOffice(officeId) {
     this.assertPresident();
     return Object.values(this.votes).filter((vote) => vote.office_id === officeId);
@@ -448,6 +466,32 @@ export class LocalElectionService {
     };
     writeJson(LOCAL_VOTES_KEY, this.votes);
     return { ...this.votes[key] };
+  }
+
+  async saveCandidateNote(officeId, candidateId, noteText) {
+    if (!this.profile) {
+      throw new Error("Sign in before saving private candidate notes.");
+    }
+
+    const normalizedText = String(noteText ?? "");
+    const key = `${this.profile.id}::${officeId}::${candidateId}`;
+
+    if (!normalizedText.trim()) {
+      delete this.candidateNotes[key];
+      writeJson(LOCAL_CANDIDATE_NOTES_KEY, this.candidateNotes);
+      return null;
+    }
+
+    this.candidateNotes[key] = {
+      office_id: officeId,
+      candidate_id: candidateId,
+      member_id: this.profile.id,
+      note_text: normalizedText,
+      updated_at: nowIso(),
+    };
+
+    writeJson(LOCAL_CANDIDATE_NOTES_KEY, this.candidateNotes);
+    return { ...this.candidateNotes[key] };
   }
 
   async listMembers() {
@@ -494,6 +538,9 @@ export class LocalElectionService {
     this.sessions = this.sessions.filter((session) => session.member_id !== memberId);
     this.votes = Object.fromEntries(
       Object.entries(this.votes).filter(([, vote]) => vote.voter_id !== memberId),
+    );
+    this.candidateNotes = Object.fromEntries(
+      Object.entries(this.candidateNotes).filter(([, note]) => note.member_id !== memberId),
     );
 
     if (this.profile?.id === memberId) {
@@ -664,6 +711,19 @@ export class SupabaseElectionService {
     });
   }
 
+  async getCandidateNotes(officeId) {
+    if (!this.sessionToken) {
+      return [];
+    }
+
+    return (
+      (await this.callRpc("get_candidate_notes", {
+        p_session_token: this.sessionToken,
+        p_office_id: officeId,
+      })) || []
+    );
+  }
+
   async getVotesForOffice(officeId) {
     if (!this.sessionToken) {
       return [];
@@ -686,6 +746,19 @@ export class SupabaseElectionService {
       p_session_token: this.sessionToken,
       p_office_id: officeId,
       p_ballot_payload: ballotPayload,
+    });
+  }
+
+  async saveCandidateNote(officeId, candidateId, noteText) {
+    if (!this.sessionToken) {
+      throw new Error("Sign in before saving private candidate notes.");
+    }
+
+    return await this.callRpc("save_candidate_note", {
+      p_session_token: this.sessionToken,
+      p_office_id: officeId,
+      p_candidate_id: candidateId,
+      p_note_text: noteText,
     });
   }
 

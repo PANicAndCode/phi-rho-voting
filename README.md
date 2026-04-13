@@ -7,6 +7,7 @@ This is a static GitHub Pages friendly election site for Phi Sigma Rho. It inclu
 - President-controlled speeches, Q&A, discussion, and ballot opening or closing
 - Position and candidate setup for the chapter officer slate
 - Standards Board ranked ballots for four seats
+- Private candidate notes for each signed-in member
 - President-only results, member online status, role promotion, and kick-out controls
 - A local browser-only demo mode when Supabase is not configured
 
@@ -36,9 +37,10 @@ window.PHI_RHO_CONFIG = {
 4. The schema now creates or resets the fixed president account automatically. The default president password is `P3ngu!n84`.
 5. If your project already had the older schema, run [supabase/reset-president-account.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/reset-president-account.sql).
 6. If your project was already live before the account-removal update, run [supabase/update-kick-member-function.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/update-kick-member-function.sql).
+7. If your project was already live before the candidate-notes update, run [supabase/add-candidate-notes.sql](/Users/jillianflaspohler/Downloads/Phi Rho Voting/supabase/add-candidate-notes.sql).
 
-7. Open the site. Members can create accounts immediately with their name and password.
-8. The president signs in with the dedicated president button and the password from step 4.
+8. Open the site. Members can create accounts immediately with their name and password.
+9. The president signs in with the dedicated president button and the password from step 4.
 
 ## How access works
 

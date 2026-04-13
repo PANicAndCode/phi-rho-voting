@@ -579,6 +579,17 @@ textarea:focus {
   border-color: rgba(141, 54, 73, 0.18);
 }
 
+.candidate-card {
+  align-items: stretch;
+}
+
+.candidate-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
 .candidate-card p,
 .queue-card p,
 .candidate-editor-row p,
@@ -587,6 +598,42 @@ textarea:focus {
   margin: 6px 0 0;
   color: var(--slate-700);
   line-height: 1.55;
+}
+
+.candidate-note-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(94, 31, 44, 0.08);
+}
+
+.candidate-note-label {
+  font-size: 0.84rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--wine-700);
+}
+
+.candidate-note-input {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+}
+
+.candidate-note-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.candidate-note-meta,
+.candidate-note-lock {
+  color: var(--slate-500);
+  font-size: 0.92rem;
 }
 
 .member-main {
@@ -748,6 +795,12 @@ textarea:focus {
 
   .member-actions {
     justify-content: flex-start;
+  }
+
+  .candidate-top,
+  .candidate-note-actions {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .button-grid,
