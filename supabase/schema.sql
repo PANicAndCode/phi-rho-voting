@@ -1,7 +1,8 @@
 -- Run this on a new Supabase project, or after removing any earlier
 -- email-auth version of this election schema.
 
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 drop table if exists public.votes cascade;
 drop table if exists public.member_sessions cascade;
@@ -10,7 +11,7 @@ drop table if exists public.app_state cascade;
 drop table if exists public.profiles cascade;
 
 create table public.members (
-  id uuid primary key default gen_random_uuid(),
+  id uuid primary key default extensions.gen_random_uuid(),
   login_name text not null,
   login_name_normalized text not null unique,
   display_name text not null,
@@ -24,7 +25,7 @@ create table public.members (
 );
 
 create table public.member_sessions (
-  id uuid primary key default gen_random_uuid(),
+  id uuid primary key default extensions.gen_random_uuid(),
   member_id uuid not null references public.members (id) on delete cascade,
   token_hash text not null unique,
   created_at timestamptz not null default now(),
@@ -88,7 +89,7 @@ as $$
     m.contact_email
   from public.member_sessions s
   join public.members m on m.id = s.member_id
-  where s.token_hash = encode(digest(trim(coalesce(p_session_token, '')), 'sha256'), 'hex')
+  where s.token_hash = encode(extensions.digest(trim(coalesce(p_session_token, '')), 'sha256'::text), 'hex')
     and s.revoked_at is null
     and m.removed_at is null
   limit 1;
@@ -134,8 +135,8 @@ begin
     raise exception 'Member account not found.';
   end if;
 
-  v_token := encode(gen_random_bytes(24), 'hex');
-  v_token_hash := encode(digest(v_token, 'sha256'), 'hex');
+  v_token := encode(extensions.gen_random_bytes(24), 'hex');
+  v_token_hash := encode(extensions.digest(v_token, 'sha256'::text), 'hex');
 
   insert into public.member_sessions (
     member_id,
@@ -211,7 +212,7 @@ begin
     v_name,
     v_normalized,
     v_name,
-    crypt(trim(p_password), gen_salt('bf')),
+    extensions.crypt(trim(p_password), extensions.gen_salt('bf')),
     'member',
     coalesce(nullif(trim(coalesce(p_member_status, '')), ''), 'active'),
     null,
@@ -242,7 +243,7 @@ begin
     and removed_at is null
   limit 1;
 
-  if not found or crypt(trim(coalesce(p_password, '')), v_member.password_hash) <> v_member.password_hash then
+  if not found or extensions.crypt(trim(coalesce(p_password, '')), v_member.password_hash) <> v_member.password_hash then
     raise exception 'That name and password did not match.';
   end if;
 
@@ -272,7 +273,7 @@ begin
     raise exception 'Create the president account in SQL first, then use the president sign-in button.';
   end if;
 
-  if crypt(trim(coalesce(p_password, '')), v_member.password_hash) <> v_member.password_hash then
+  if extensions.crypt(trim(coalesce(p_password, '')), v_member.password_hash) <> v_member.password_hash then
     raise exception 'The president password is incorrect.';
   end if;
 
@@ -328,7 +329,7 @@ begin
   update public.member_sessions
   set revoked_at = now(),
       revoked_reason = 'signed out'
-  where token_hash = encode(digest(trim(coalesce(p_session_token, '')), 'sha256'), 'hex')
+  where token_hash = encode(extensions.digest(trim(coalesce(p_session_token, '')), 'sha256'::text), 'hex')
     and revoked_at is null;
 end;
 $$;
@@ -382,7 +383,7 @@ begin
       member_status = coalesce(nullif(trim(coalesce(p_member_status, '')), ''), member_status),
       password_hash = case
         when coalesce(trim(coalesce(p_new_password, '')), '') = '' then password_hash
-        else crypt(trim(p_new_password), gen_salt('bf'))
+        else extensions.crypt(trim(p_new_password), extensions.gen_salt('bf'))
       end,
       updated_at = now()
   where id = v_session.member_id
@@ -746,7 +747,7 @@ on conflict (id) do nothing;
 --   'President',
 --   public.normalize_member_name('President'),
 --   'President',
---   crypt('choose-a-strong-password', gen_salt('bf')),
+--   extensions.crypt('choose-a-strong-password', extensions.gen_salt('bf')),
 --   'president',
 --   'active',
 --   public.president_login_email()
