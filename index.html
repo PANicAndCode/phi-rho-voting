@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phi Sigma Rho Election Center</title>
+    <meta
+      name="description"
+      content="Phi Sigma Rho chapter elections portal for speeches, Q&A timing, voting, and president-only results."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Phi Sigma Rho Election Center</p>
+          <h1>Together We Build the Future</h1>
+          <p class="hero-text">
+            A chapter election hub for speeches, Q&amp;A timing, discussion, secret
+            ballots, and president-only result review.
+          </p>
+          <div class="tag-row">
+            <span class="tag">Wine Red</span>
+            <span class="tag">Silver</span>
+            <span class="tag">Sigmund the Penguin</span>
+            <span class="tag">Orchid</span>
+            <span class="tag">Pyramid</span>
+          </div>
+        </div>
+        <div class="hero-side">
+          <div class="crest-card">
+            <div class="crest-top">
+              <span class="crest-label">Election Flow</span>
+              <span id="backendBadge" class="status-pill">Checking backend</span>
+            </div>
+            <div class="crest-matrix">
+              <div class="crest-box">
+                <span class="crest-number">3</span>
+                <span class="crest-caption">minute speech</span>
+              </div>
+              <div class="crest-box">
+                <span class="crest-number">7</span>
+                <span class="crest-caption">minute Q&amp;A</span>
+              </div>
+              <div class="crest-box">
+                <span class="crest-number">10</span>
+                <span class="crest-caption">minute discussion</span>
+              </div>
+              <div class="crest-box">
+                <span class="crest-number">4</span>
+                <span class="crest-caption">Standards seats</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section id="authSection" class="card auth-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Access</p>
+            <h2>Sign in or enter demo mode</h2>
+          </div>
+          <span id="authBadge" class="status-pill muted">Not signed in</span>
+        </div>
+
+        <div id="authMessage" class="notice hidden"></div>
+
+        <div id="remoteAuthBlock" class="auth-grid hidden">
+          <form id="remoteAuthForm" class="stack-form">
+            <label>
+              Email
+              <input id="emailInput" type="email" autocomplete="username" />
+            </label>
+            <label>
+              Password
+              <input
+                id="passwordInput"
+                type="password"
+                autocomplete="current-password"
+              />
+            </label>
+            <label>
+              Display name
+              <input
+                id="displayNameInput"
+                type="text"
+                placeholder="For your chapter member profile"
+              />
+            </label>
+            <label>
+              Member status
+              <select id="memberStatusInput">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="button" id="signInButton" class="button primary">
+                Sign in
+              </button>
+              <button type="button" id="signUpButton" class="button secondary">
+                Create account
+              </button>
+            </div>
+          </form>
+
+          <div class="auth-help">
+            <h3>Supabase setup notes</h3>
+            <p>
+              Chapter members sign in with email and password. President access is
+              controlled by the <code>profiles.role</code> column in Supabase, so
+              results stay hidden from everyone else.
+            </p>
+            <p>
+              If email confirmation is on, new members may need to confirm before
+              they can sign in.
+            </p>
+          </div>
+        </div>
+
+        <div id="profileBlock" class="profile-grid hidden">
+          <div class="profile-summary">
+            <h3 id="profileHeading">Signed in</h3>
+            <p id="profileSummaryText"></p>
+          </div>
+          <form id="profileForm" class="stack-form">
+            <label>
+              Display name
+              <input id="profileDisplayName" type="text" />
+            </label>
+            <label>
+              Member status
+              <select id="profileMemberStatus">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="submit" class="button primary">Save profile</button>
+              <button type="button" id="signOutButton" class="button ghost">
+                Sign out
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div id="localAuthBlock" class="auth-grid hidden">
+          <form id="localAuthForm" class="stack-form">
+            <label>
+              Display name
+              <input
+                id="localDisplayName"
+                type="text"
+                placeholder="Your demo identity"
+              />
+            </label>
+            <label>
+              Role
+              <select id="localRole">
+                <option value="member">Member</option>
+                <option value="president">President</option>
+              </select>
+            </label>
+            <label>
+              Member status
+              <select id="localMemberStatus">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="submit" class="button primary">Enter demo</button>
+              <button type="button" id="resetDemoButton" class="button ghost">
+                Reset demo data
+              </button>
+            </div>
+          </form>
+          <div class="auth-help">
+            <h3>Demo mode</h3>
+            <p>
+              This fallback runs entirely in the browser so you can preview the
+              flow before wiring Supabase. It is not secure and does not sync
+              across separate devices.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <main class="main-grid">
+        <section class="card board-card">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Chapter Floor</p>
+              <h2>Live election board</h2>
+            </div>
+            <div class="button-row">
+              <button
+                type="button"
+                id="memberViewButton"
+                class="button secondary compact"
+              >
+                Member view
+              </button>
+              <button
+                type="button"
+                id="presidentViewButton"
+                class="button ghost compact"
+              >
+                President console
+              </button>
+            </div>
+          </div>
+
+          <div id="phaseBanner" class="phase-banner"></div>
+
+          <div class="timer-grid">
+            <article class="timer-card accent">
+              <p class="eyebrow">Countdown</p>
+              <h3 id="timerLabel">Awaiting cue</h3>
+              <div id="timerValue" class="timer-value">--:--</div>
+              <p id="timerMeta" class="muted-copy"></p>
+            </article>
+
+            <article class="timer-card">
+              <p class="eyebrow">Current office</p>
+              <h3 id="currentOfficeName">No office selected</h3>
+              <p id="currentOfficeMeta" class="muted-copy"></p>
+            </article>
+
+            <article class="timer-card">
+              <p class="eyebrow">Speaker / candidate</p>
+              <h3 id="currentCandidateName">Waiting for president cue</h3>
+              <p id="currentCandidateMeta" class="muted-copy"></p>
+            </article>
+          </div>
+
+          <div class="board-layout">
+            <article class="panel-card">
+              <div class="subhead">
+                <div>
+                  <p class="eyebrow">Position details</p>
+                  <h3>Slate &amp; rules</h3>
+                </div>
+              </div>
+              <div id="officeDetailCard" class="detail-card"></div>
+              <div id="candidateList" class="candidate-list"></div>
+            </article>
+
+            <article class="panel-card">
+              <div class="subhead">
+                <div>
+                  <p class="eyebrow">Ballot</p>
+                  <h3>Cast or update your vote</h3>
+                </div>
+                <span id="ballotStatusPill" class="status-pill muted">Waiting</span>
+              </div>
+              <div id="ballotNotice" class="notice"></div>
+              <form id="ballotForm" class="stack-form"></form>
+              <div id="voteReceipt" class="receipt-card hidden"></div>
+            </article>
+
+            <article class="panel-card">
+              <div class="subhead">
+                <div>
+                  <p class="eyebrow">Chapter agenda</p>
+                  <h3>Election lineup</h3>
+                </div>
+              </div>
+              <div id="officeQueue" class="office-queue"></div>
+            </article>
+          </div>
+        </section>
+
+        <aside id="presidentPanel" class="card president-card hidden">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">President Console</p>
+              <h2>Control the room</h2>
+            </div>
+            <span id="presidentRoleBadge" class="status-pill muted">Locked</span>
+          </div>
+
+          <div id="presidentLockNotice" class="notice"></div>
+
+          <section class="admin-block">
+            <div class="subhead">
+              <div>
+                <p class="eyebrow">Flow control</p>
+                <h3>Run speeches, Q&amp;A, and ballots</h3>
+              </div>
+            </div>
+            <form id="controlForm" class="stack-form">
+              <label>
+                Active office
+                <select id="activeOfficeSelect"></select>
+              </label>
+              <label>
+                Current candidate / speaker
+                <select id="activeCandidateSelect"></select>
+              </label>
+              <label>
+                Announcement
+                <textarea
+                  id="announcementInput"
+                  rows="3"
+                  placeholder="Optional note for members"
+                ></textarea>
+              </label>
+              <div class="button-grid">
+                <button type="button" id="saveBoardButton" class="button primary">
+                  Save board setup
+                </button>
+                <button type="button" id="speechButton" class="button secondary">
+                  Start speech
+                </button>
+                <button type="button" id="qaButton" class="button secondary">
+                  Start Q&amp;A
+                </button>
+                <button
+                  type="button"
+                  id="discussionButton"
+                  class="button secondary"
+                >
+                  Start discussion
+                </button>
+                <button type="button" id="openVoteButton" class="button secondary">
+                  Open voting
+                </button>
+                <button type="button" id="closeVoteButton" class="button ghost">
+                  Close voting
+                </button>
+                <button type="button" id="extendButton" class="button ghost">
+                  Add one minute
+                </button>
+                <button type="button" id="resetPhaseButton" class="button ghost">
+                  Reset phase
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="admin-block">
+            <div class="subhead">
+              <div>
+                <p class="eyebrow">Position setup</p>
+                <h3>Configure offices and candidates</h3>
+              </div>
+            </div>
+
+            <form id="officeSetupForm" class="stack-form">
+              <label>
+                Edit office
+                <select id="editOfficeSelect"></select>
+              </label>
+            </form>
+
+            <div id="candidateEditor" class="candidate-editor"></div>
+
+            <form id="candidateForm" class="stack-form inline-form">
+              <label>
+                Candidate name
+                <input id="candidateNameInput" type="text" />
+              </label>
+              <label>
+                Candidate note
+                <input
+                  id="candidateNoteInput"
+                  type="text"
+                  placeholder="Optional major, platform, or reminder"
+                />
+              </label>
+              <button type="submit" class="button primary">Add candidate</button>
+            </form>
+
+            <form id="customOfficeForm" class="stack-form inline-form">
+              <label>
+                Custom office name
+                <input
+                  id="customOfficeNameInput"
+                  type="text"
+                  placeholder="Special election or committee role"
+                />
+              </label>
+              <label>
+                Ballot type
+                <select id="customOfficeBallotType">
+                  <option value="single">Single choice</option>
+                  <option value="ranked">Ranked (top 4)</option>
+                </select>
+              </label>
+              <label>
+                Category
+                <select id="customOfficeCategory">
+                  <option value="chair">Chair / officer</option>
+                  <option value="special">Special election</option>
+                  <option value="standards">Standards-style board</option>
+                </select>
+              </label>
+              <button type="submit" class="button secondary">Add office</button>
+            </form>
+          </section>
+
+          <section class="admin-block">
+            <div class="subhead">
+              <div>
+                <p class="eyebrow">Results</p>
+                <h3>President-only tally review</h3>
+              </div>
+            </div>
+            <form id="resultsForm" class="stack-form">
+              <label>
+                Review office
+                <select id="resultsOfficeSelect"></select>
+              </label>
+            </form>
+            <div id="resultsCard" class="results-card"></div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="footer-note">
+        Built for Phi Sigma Rho chapter elections. Default timing reflects the
+        bylaws: three minute speeches, seven minute Q&amp;A, and up to ten minutes
+        of discussion. Standards Board uses ranked ballots for four seats.
+      </footer>
+    </div>
+
+    <script src="config.js"></script>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>
